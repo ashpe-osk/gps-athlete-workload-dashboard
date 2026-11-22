@@ -8,9 +8,9 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))
 
-from cleaning import clean_pipeline, load_raw  # noqa: E402
+from src.cleaning import clean_pipeline, load_raw  # noqa: E402
 
 PLANTED = pd.read_csv(ROOT / "data" / "raw" / "planted_issues_log.csv")
 CLEAN, ISSUES = clean_pipeline()

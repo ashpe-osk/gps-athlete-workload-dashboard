@@ -4,38 +4,44 @@ app.py
 Streamlit interface ONLY. All calculations live in src/metrics.py.
 Run from the project root:   streamlit run app/app.py
 """
+import importlib
 import sys
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
+# Streamlit adds the app directory to sys.path; add the repository root for package imports.
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+root_path = str(ROOT)
+if root_path in sys.path:
+    sys.path.remove(root_path)
+sys.path.insert(0, root_path)
 
-import charts  # noqa: E402
-import metrics as m  # noqa: E402
-from cleaning import clean_pipeline  # noqa: E402
+from src import charts, metrics as m, quality, theme as theme_module  # noqa: E402
+from src.cleaning import clean_pipeline  # noqa: E402
+from src.formatting import format_metric, format_percent  # noqa: E402
+from src import report as report_builder  # noqa: E402
 
-st.set_page_config(page_title="GPS Workload Dashboard (Synthetic Demo)", page_icon="📊", layout="wide")
+# Streamlit keeps imported modules in sys.modules across reruns.
+theme_module = importlib.reload(theme_module)
+charts = importlib.reload(charts)
+app_css = theme_module.app_css
 
-NUMBER_FORMATS = {
-    "minutes_played": "{:.0f}", "total_distance_km": "{:.2f}", "distance_per_min": "{:.1f}",
-    "hsr_distance_m": "{:,.0f}", "top_speed_kmh": "{:.1f}", "sprint_count": "{:.0f}",
-    "accel_count": "{:.0f}", "decel_count": "{:.0f}", "peak_accel_ms2": "{:.1f}", "player_load_au": "{:,.1f}",
-}
-
+st.set_page_config(
+    page_title="GPS Workload Dashboard (Synthetic Demo)",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 def fmt(column: str, value) -> str:
-    """Format a value with its unit. Missing values show as a dash, never 0."""
-    if pd.isna(value):
-        return "—"
-    unit = m.METRIC_INFO[column][2]
-    return f"{NUMBER_FORMATS[column].format(float(value))} {unit}"
+    """Keep the original app helper while sharing its formatting implementation."""
+    return format_metric(column, value)
 
 
 def fmt_pct(value) -> str | None:
-    return None if pd.isna(value) else f"{value:+.1f}%"
+    return format_percent(value)
 
 
 @st.cache_data
@@ -46,8 +52,25 @@ def load_clean():
 
 clean_df, issues_df = load_clean()
 
+display_theme = st.sidebar.radio(
+    "Display theme",
+    options=["Light", "Dark"],
+    horizontal=True,
+    key="display_theme",
+)
+
 # ------------------------------------------------------------------ header
-st.title("GPS Athlete Performance and Workload Dashboard")
+st.markdown(
+    f"""
+    <style>{app_css(display_theme)}</style>
+    <div class="brand-hero">
+      <div class="brand-kicker">Performance intelligence · synthetic prototype</div>
+      <div class="brand-title" role="heading" aria-level="1">GPS Workload Intelligence</div>
+      <p>Match analytics · athlete workload · data integrity</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 st.warning(
     "**SYNTHETIC DEMO DATA.** Club names are public league context only. All athletes, fixtures, dates and "
     "GPS values are fictional. Independent portfolio prototype, not an official GameOn Collective product."
@@ -56,8 +79,10 @@ st.warning(
 # ------------------------------------------------------------------ sidebar
 athletes = clean_df[["athlete_id", "athlete_name", "position", "club"]].drop_duplicates().sort_values("athlete_id")
 labels = {r.athlete_id: f"{r.athlete_name} ({r.position})" for r in athletes.itertuples()}
-selected_id = st.sidebar.selectbox("Athlete", options=list(labels), format_func=labels.get)
-st.sidebar.caption("Sessions flagged as possible sensor dropout are excluded from trends and averages.")
+with st.sidebar.container(border=True, key="player-selection-card"):
+    st.markdown("#### Player selection")
+    selected_id = st.selectbox("Athlete", options=list(labels), format_func=labels.get)
+    st.caption("Sessions flagged as possible sensor dropout are excluded from trends and averages.")
 
 athlete_all = clean_df[clean_df["athlete_id"] == selected_id].sort_values("match_date").reset_index(drop=True)
 athlete_use = m.add_per90_columns(m.usable_sessions(athlete_all))
@@ -79,7 +104,6 @@ with tabs[0]:
     c3.metric("Total sessions", len(clean_df))
     c4.metric("Usable sessions", int(clean_df["use_in_analysis"].sum()),
               help="Sessions that passed the data-quality screen.")
-
     latest = athlete_use.iloc[-1]
     est = " (minutes approximate)" if latest["minutes_estimated"] else ""
     st.subheader(f"Latest recorded performance: {athlete_info['athlete_name']}")
@@ -194,13 +218,26 @@ with tabs[3]:
         label, _, unit = m.METRIC_INFO[column]
         suffix = " per 90" if use_column != column else ""
         decimals = 2 if column == "total_distance_km" else 1 if column in ("distance_per_min", "player_load_au") else 0
-        fig = charts.trend_chart(athlete_use, use_column, f"{label}{suffix}", f"{unit}{suffix}", decimals, rolling_on)
+        fig = charts.trend_chart(
+            athlete_use, use_column, f"{label}{suffix}", f"{unit}{suffix}",
+            decimals, rolling_on, display_theme,
+        )
         with grid[i % 2]:
             st.plotly_chart(fig, width="stretch")
             n_valid = int(athlete_use[use_column].notna().sum())
             st.caption(f"Based on {n_valid} of {len(athlete_use)} sessions. Gaps = no valid measurement.")
     st.caption("◆ = minutes approximate. Dashed line = average of the last 3 valid sessions (appears once 3 exist). "
                + (f"{n_excluded} session(s) excluded for suspected sensor dropout." if n_excluded else ""))
+
+    st.markdown("#### Match intensity profile")
+    st.plotly_chart(
+        charts.match_intensity_scatter(athlete_use, display_theme),
+        width="stretch",
+    )
+    st.caption(
+        "Each point is an analysis-eligible match. Compare playing time with distance rate; "
+        "color shows opponent table band and diamonds mark approximate minutes."
+    )
 
     with st.expander("Match-to-match % change"):
         change_table = pd.DataFrame({"Date": athlete_use["match_date"].dt.strftime("%d %b %Y")})
@@ -209,7 +246,222 @@ with tabs[3]:
         st.dataframe(change_table, hide_index=True, width="stretch")
         st.caption("Change vs the previous session that has a value for that metric. Blank = no earlier value.")
 
-# ------------------------------------------------------------------ placeholders (next build step)
-for tab, name in zip(tabs[4:], ["Workload & Consistency", "Comparison", "Report", "Data Quality"]):
-    with tab:
-        st.info(f"{name} is built in the next step.")
+# ------------------------------------------------------------------ E. Workload & Consistency
+with tabs[4]:
+    st.subheader("Workload consistency")
+    st.caption(
+        "Variation is summarized as coefficient of variation (CV). Volume metrics are shown per 90 "
+        "where sessions are long enough, so playing time has less influence."
+    )
+    consistency = m.consistency_table(athlete_use)
+    consistency_display = consistency.rename(columns={
+        "metric": "Metric", "basis": "Basis", "n": "Valid sessions",
+        "mean": "Mean", "sd": "Standard deviation", "cv_pct": "CV (%)",
+        "low_confidence": "Low confidence",
+    })
+    st.dataframe(
+        consistency_display,
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Mean": st.column_config.NumberColumn(format="%.2f"),
+            "Standard deviation": st.column_config.NumberColumn(format="%.2f"),
+            "CV (%)": st.column_config.NumberColumn(format="%.1f%%"),
+            "Low confidence": st.column_config.CheckboxColumn(),
+        },
+    )
+    st.caption(
+        f"Low confidence means fewer than {m.MIN_SESSIONS_FOR_CONSISTENCY} valid sessions. "
+        "CV describes variability; it is not a target or a quality grade."
+    )
+    left, right = st.columns(2)
+    with left:
+        st.plotly_chart(
+            charts.consistency_heatmap(athlete_use, display_theme),
+            width="stretch",
+        )
+        st.caption("Color shows within-athlete standard deviations from the athlete's own mean.")
+    with right:
+        st.plotly_chart(
+            charts.workload_composition_chart(athlete_use, display_theme),
+            width="stretch",
+        )
+        st.caption("High-speed distance is a subset of total distance. Sessions missing either value are omitted.")
+
+# ------------------------------------------------------------------ F. Comparison
+with tabs[5]:
+    st.subheader("Compare athlete workload")
+    st.caption(
+        "Per-90 and pooled rates make playing time more comparable, but do not adjust for role, "
+        "opposition, tactics, or device configuration."
+    )
+    athlete_labels = {
+        row.athlete_id: f"{row.athlete_name} · {row.position}"
+        for row in athletes.itertuples()
+    }
+    same_position = athletes.loc[athletes["position"] == athlete_info["position"], "athlete_id"].tolist()
+    selected_comparison = st.multiselect(
+        "Athletes to compare",
+        options=list(athlete_labels),
+        default=[selected_id] + [item for item in same_position if item != selected_id][:2],
+        format_func=athlete_labels.get,
+    )
+    if not selected_comparison:
+        st.info("Select at least one athlete to see comparisons.")
+    else:
+        comparison, comparison_warnings = m.comparison_table(clean_df, selected_comparison)
+        for warning in comparison_warnings:
+            st.warning(warning)
+
+        comparison_display = comparison.rename(columns={
+            "athlete_name": "Athlete", "position": "Position", "sessions": "Sessions",
+            "total_minutes": "Minutes", "distance_per_min": "Distance (m/min)",
+            "hsr_m_per90": "HSR (m/90)", "sprints_per90": "Sprints (/90)",
+            "accels_per90": "Accelerations (/90)", "decels_per90": "Decelerations (/90)",
+            "player_load_per90": "Player Load (/90)", "top_speed_best_kmh": "Best speed (km/h)",
+        })
+        display_columns = [
+            "Athlete", "Position", "Sessions", "Minutes", "Distance (m/min)",
+            "HSR (m/90)", "Sprints (/90)", "Accelerations (/90)",
+            "Decelerations (/90)", "Player Load (/90)", "Best speed (km/h)",
+        ]
+        st.dataframe(
+            comparison_display[display_columns],
+            hide_index=True,
+            width="stretch",
+            column_config={
+                column: st.column_config.NumberColumn(format="%.1f")
+                for column in display_columns[3:]
+            },
+        )
+        st.caption("Radar axes are cohort percentiles for the selected group, not league rankings or performance targets.")
+        left, right = st.columns(2)
+        with left:
+            st.plotly_chart(
+                charts.comparison_radar_chart(comparison, display_theme),
+                width="stretch",
+            )
+        with right:
+            st.plotly_chart(
+                charts.comparison_bubble_chart(comparison, display_theme),
+                width="stretch",
+            )
+
+        distribution_options = {
+            "Distance per minute": ("distance_per_min", "Distance per minute (m/min)"),
+            "High-speed running per 90": ("hsr_distance_m_per90", "HSR (m / 90 min)"),
+            "Sprints per 90": ("sprint_count_per90", "Sprints / 90 min"),
+            "Player Load per 90": ("player_load_au_per90", "Player Load / 90 min"),
+        }
+        distribution_label = st.selectbox(
+            "Session distribution",
+            options=list(distribution_options),
+            key="comparison_distribution",
+        )
+        distribution_column, distribution_unit = distribution_options[distribution_label]
+        st.plotly_chart(
+            charts.comparison_box_chart(
+                clean_df, selected_comparison, distribution_column,
+                f"{distribution_label} · session distribution",
+                distribution_unit, display_theme,
+            ),
+            width="stretch",
+        )
+        st.caption("Boxes show the interquartile range and median; points are individual usable sessions.")
+
+# ------------------------------------------------------------------ G. Report
+with tabs[6]:
+    st.subheader("Athlete workload report")
+    report_data = report_builder.build_report(clean_df, issues_df, selected_id)
+    report_markdown = report_builder.render_report_markdown(report_data)
+    st.markdown(f"**{report_data['athlete_name']} · {report_data['position']} · {report_data['club']}**")
+    st.caption(
+        f"{report_data['period_start']:%d %b %Y} – {report_data['period_end']:%d %b %Y} · "
+        f"{len(report_data['sessions'])} analysis-eligible sessions"
+    )
+    st.info("This downloadable report is a synthetic-data demonstration, not an assessment of a real athlete.")
+    st.markdown("#### Combined metrics")
+    report_metrics = report_data["metrics"]
+    st.dataframe(
+        pd.DataFrame({
+            "Metric": report_metrics["metric"],
+            "Value": [format_metric(c, v) for c, v in zip(report_metrics["column"], report_metrics["value"])],
+            "Aggregation": report_metrics["method"],
+            "Valid sessions": [
+                f"{valid} of {total}"
+                for valid, total in zip(report_metrics["n_valid"], report_metrics["n_sessions"])
+            ],
+        }),
+        hide_index=True,
+        width="stretch",
+    )
+    st.download_button(
+        "Download report (.md)",
+        data=report_markdown,
+        file_name=f"{selected_id.lower()}_workload_report.md",
+        mime="text/markdown",
+        type="primary",
+    )
+    report_csv = report_metrics.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download metrics (.csv)",
+        data=report_csv,
+        file_name=f"{selected_id.lower()}_workload_metrics.csv",
+        mime="text/csv",
+    )
+    with st.expander("Preview full report"):
+        st.markdown(report_markdown)
+
+# ------------------------------------------------------------------ H. Data Quality
+with tabs[7]:
+    st.subheader("Data quality & audit trail")
+    summary = quality.quality_summary(clean_df, issues_df)
+    q1, q2, q3, q4 = st.columns(4)
+    q1.metric("Issue records", summary["issue_records"])
+    q2.metric("Affected sessions", summary["affected_sessions"])
+    q3.metric("Analysis eligible", summary["usable_sessions"])
+    q4.metric("Excluded", summary["excluded_sessions"])
+    st.caption(
+        "Sessions flagged for possible sensor dropout are excluded from trends and averages. "
+        "All issue records remain visible here; this is a screening aid, not sensor certification."
+    )
+    st.plotly_chart(
+        charts.quality_map_chart(clean_df, display_theme),
+        width="stretch",
+    )
+    issue_counts = pd.DataFrame([
+        {
+            "Issue": quality.ISSUE_LABELS.get(issue_type, issue_type.replace("_", " ").title()),
+            "Records": count,
+        }
+        for issue_type, count in summary["issue_counts"].items()
+    ]).sort_values("Records", ascending=False)
+    st.markdown("#### Issue register")
+    if issue_counts.empty:
+        st.success("No quality issues were recorded.")
+    else:
+        st.dataframe(issue_counts, hide_index=True, width="stretch")
+        register = quality.issue_register(clean_df, issues_df)
+        register_display = register.rename(columns={
+            "match_date": "Date", "athlete_name": "Athlete", "position": "Position",
+            "opponent": "Opponent", "issue_label": "Issue", "column": "Field",
+            "detail": "Detail", "quality_status": "Session status", "use_in_analysis": "Included",
+        })
+        register_columns = [
+            column for column in [
+                "Date", "Athlete", "Position", "Opponent", "Issue", "Field",
+                "Detail", "Session status", "Included",
+            ] if column in register_display
+        ]
+        st.dataframe(
+            register_display[register_columns],
+            hide_index=True,
+            width="stretch",
+            column_config={"Date": st.column_config.DateColumn(format="DD MMM YYYY")},
+        )
+        st.download_button(
+            "Download issue register (.csv)",
+            data=register.to_csv(index=False).encode("utf-8"),
+            file_name="gps_data_quality_issue_register.csv",
+            mime="text/csv",
+        )

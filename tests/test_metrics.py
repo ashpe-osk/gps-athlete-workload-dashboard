@@ -7,10 +7,10 @@ import pandas as pd
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))
 
-import metrics as m  # noqa: E402
-from cleaning import clean_pipeline  # noqa: E402
+from src import metrics as m  # noqa: E402
+from src.cleaning import clean_pipeline  # noqa: E402
 
 
 def two_match_athlete():
