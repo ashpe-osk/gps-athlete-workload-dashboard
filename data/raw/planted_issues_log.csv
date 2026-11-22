@@ -1,0 +1,17 @@
+session_id,issue_type,column,note
+M-ZET-02-ATH-02,missing_value,sprint_count,sprint count not recorded
+M-ZET-06-ATH-02,missing_value,sprint_count,sprint count not recorded
+M-MAT-08-ATH-04,missing_value,sprint_count,sprint count not recorded
+M-ZET-03-ATH-01,missing_value,top_speed_kmh,top speed not recorded
+M-KIB-02-ATH-05,missing_value,top_speed_kmh,top speed not recorded
+M-ZET-03-ATH-02,missing_value,hsr_distance_m,HSR not recorded
+M-KIB-03-ATH-06,missing_value,hsr_distance_m,HSR not recorded
+M-MAT-03-ATH-04,missing_value,player_load_au,player load not recorded
+M-ZET-06-ATH-01,partial_record,multiple,"sensor dropout: distance/load ~55% of expected, HSR and sprints missing"
+M-KIB-06-ATH-06,invalid_value,top_speed_kmh,52.0 km/h is physiologically implausible
+M-ZET-02-ATH-01,invalid_value,peak_accel_ms2,14.2 m/s2 is implausible
+M-ZET-01-ATH-02,estimated_minutes,minutes_played,minutes rounded to nearest 15 (approximate)
+M-MAT-02-ATH-04,estimated_minutes,minutes_played,minutes rounded to nearest 15 (approximate)
+M-MAT-07-ATH-04,estimated_minutes,minutes_played,minutes rounded to nearest 15 (approximate)
+M-KIB-06-ATH-06,estimated_minutes,minutes_played,minutes rounded to nearest 15 (approximate)
+M-MAT-01-ATH-04,duplicate_record,all,exact copy of this session appended
