@@ -98,3 +98,44 @@ def test_comparison_warns_about_goalkeepers_and_small_samples():
 def test_real_pipeline_dropout_session_is_excluded():
     clean, _ = clean_pipeline()
     assert len(m.usable_sessions(clean)) == len(clean) - 1
+
+
+def test_historical_baseline_excludes_evaluated_session_and_skips_missing():
+    df = pd.DataFrame({
+        "match_id": ["a", "b", "c", "d"],
+        "match_date": pd.to_datetime(["2026-01-01", "2026-01-15", "2026-01-29", "2026-02-12"]),
+        "athlete_id": ["A"] * 4,
+        "use_in_analysis": [True, True, True, True],
+        "x": [10.0, np.nan, 30.0, 40.0],
+    })
+    baseline = m.historical_baseline_summary(df, "x", "d")
+    assert baseline["previous"] == pytest.approx(30.0)
+    assert baseline["historical_mean"] == pytest.approx(20.0)
+    assert baseline["historical_median"] == pytest.approx(20.0)
+    assert baseline["baseline_n"] == 2
+    assert baseline["pct_previous"] == pytest.approx((40.0 - 30.0) / 30.0 * 100)
+    assert baseline["pct_baseline"] == pytest.approx(100.0)
+
+
+def test_historical_baseline_handles_missing_current_and_no_prior_values():
+    df = pd.DataFrame({
+        "match_id": ["a", "b"],
+        "match_date": pd.to_datetime(["2026-01-01", "2026-01-15"]),
+        "athlete_id": ["A", "A"],
+        "use_in_analysis": [True, True],
+        "x": [np.nan, np.nan],
+    })
+    baseline = m.historical_baseline_summary(df, "x", "b")
+    assert np.isnan(baseline["latest"])
+    assert np.isnan(baseline["previous"])
+    assert baseline["baseline_n"] == 0
+
+
+def test_date_range_filter_is_inclusive_and_preserves_missing_values():
+    df = pd.DataFrame({
+        "match_date": pd.to_datetime(["2026-01-01", "2026-01-15", "2026-02-01"]),
+        "x": [10.0, np.nan, 30.0],
+    })
+    filtered = m.filter_sessions_by_date(df, "2026-01-15", "2026-02-01")
+    assert len(filtered) == 2
+    assert pd.isna(filtered.iloc[0]["x"])

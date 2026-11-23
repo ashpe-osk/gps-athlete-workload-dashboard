@@ -31,10 +31,15 @@ VOLUME_COLUMNS = ["total_distance_km", "hsr_distance_m", "sprint_count",
                   "accel_count", "decel_count", "player_load_au"]
 TREND_METRICS = ["total_distance_km", "distance_per_min", "hsr_distance_m",
                  "sprint_count", "player_load_au", "accel_count", "decel_count"]
+HISTORICAL_METRICS = [
+    column for column in METRIC_INFO
+    if column != "minutes_played"
+]
 
 ROLLING_WINDOW = 3
 MIN_PRIOR_SESSIONS = 3            # needed before comparing with own history
 MIN_SESSIONS_FOR_CONSISTENCY = 4  # below this, variability is flagged low-confidence
+MIN_SESSIONS_FOR_REFERENCE_BAND = 6
 MIN_MINUTES_FOR_RATES = 45        # per-90 values only for sessions at least this long
 MIN_TOTAL_MINUTES_FOR_COMPARISON = 180
 
@@ -45,6 +50,19 @@ MIN_TOTAL_MINUTES_FOR_COMPARISON = 180
 def usable_sessions(df: pd.DataFrame) -> pd.DataFrame:
     """Sessions that passed the data-quality screen, oldest first."""
     return df[df["use_in_analysis"]].sort_values(["athlete_id", "match_date"]).reset_index(drop=True)
+
+
+def filter_sessions_by_date(
+    df: pd.DataFrame,
+    start_date,
+    end_date,
+) -> pd.DataFrame:
+    """Filter sessions to an inclusive date range without replacing missing values."""
+    filtered = df.copy()
+    dates = pd.to_datetime(filtered["match_date"], errors="coerce")
+    start = pd.Timestamp(start_date)
+    end = pd.Timestamp(end_date)
+    return filtered.loc[(dates >= start) & (dates <= end)].copy()
 
 
 def add_per90_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -110,6 +128,74 @@ def compare_with_own_history(athlete_df: pd.DataFrame, column: str, match_id: st
         if result["prior_mean"] != 0:
             result["pct_diff"] = (result["current"] - result["prior_mean"]) / result["prior_mean"] * 100
     return result
+
+
+def historical_baseline_summary(
+    athlete_df: pd.DataFrame,
+    column: str,
+    match_id: str | None = None,
+) -> dict:
+    """Summarize a latest or selected session against prior eligible valid sessions."""
+    eligible = usable_sessions(athlete_df) if "use_in_analysis" in athlete_df else athlete_df.sort_values("match_date")
+    if eligible.empty:
+        raise ValueError("No analysis-eligible sessions")
+
+    if match_id is None:
+        row = eligible.iloc[-1:]
+    else:
+        matching = eligible[eligible["match_id"] == match_id]
+        if matching.empty:
+            raise ValueError(f"No session for match_id {match_id}")
+        row = matching.iloc[-1:]
+
+    current_date = row.iloc[0]["match_date"]
+    current = row.iloc[0][column] if column in eligible else np.nan
+    prior = eligible.loc[
+        eligible["match_date"] < current_date,
+        column,
+    ].dropna().astype(float)
+
+    previous = np.nan
+    if not prior.empty:
+        previous = float(prior.iloc[-1])
+
+    mean = float(prior.mean()) if len(prior) else np.nan
+    median = float(prior.median()) if len(prior) else np.nan
+    pct_previous = np.nan
+    pct_baseline = np.nan
+    if not pd.isna(current) and not pd.isna(previous) and previous != 0:
+        pct_previous = (float(current) - previous) / previous * 100
+    if not pd.isna(current) and not pd.isna(mean) and mean != 0:
+        pct_baseline = (float(current) - mean) / mean * 100
+
+    return {
+        "column": column,
+        "match_id": str(row.iloc[0]["match_id"]),
+        "latest": np.nan if pd.isna(current) else float(current),
+        "previous": previous,
+        "historical_mean": mean,
+        "historical_median": median,
+        "pct_previous": pct_previous,
+        "pct_baseline": pct_baseline,
+        "baseline_n": int(len(prior)),
+    }
+
+
+def historical_baseline_table(
+    athlete_df: pd.DataFrame,
+    match_id: str | None = None,
+    columns: list[str] | None = None,
+) -> pd.DataFrame:
+    """One row per metric for latest/selected-session historical comparisons."""
+    selected_columns = columns or HISTORICAL_METRICS
+    selected_columns = [
+        column for column in selected_columns
+        if column in athlete_df.columns
+    ]
+    return pd.DataFrame([
+        historical_baseline_summary(athlete_df, column, match_id)
+        for column in selected_columns
+    ])
 
 
 def match_vs_history(df: pd.DataFrame, athlete_id: str, match_id: str) -> pd.DataFrame:

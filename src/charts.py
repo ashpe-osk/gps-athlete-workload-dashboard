@@ -37,7 +37,8 @@ def _style(fig: go.Figure, title: str, y_label: str, theme: str = "Light") -> go
 
 def trend_chart(athlete_df, column: str, title: str, y_label: str,
                 decimals: int = 1, show_rolling: bool = True,
-                theme: str = "Light") -> go.Figure:
+                theme: str = "Light", show_labels: bool = False,
+                show_reference_band: bool = True) -> go.Figure:
     """One metric across matches.
     - Line breaks where a value is missing (it is never drawn as zero).
     - Diamonds mark sessions whose minutes are approximate.
@@ -51,7 +52,11 @@ def trend_chart(athlete_df, column: str, title: str, y_label: str,
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=athlete_df["match_date"], y=values, mode="lines+markers", name="Match value",
+        x=athlete_df["match_date"], y=values,
+        mode="lines+markers" + ("+text" if show_labels else ""),
+        text=[f"{value:.{decimals}f}" if pd.notna(value) else "" for value in values],
+        textposition="top center",
+        name="Match value",
         connectgaps=False,         line=dict(color=colors["chart_accent"], width=2),
         marker=dict(size=10, symbol=symbols, line=dict(width=1.5, color="white")),
         customdata=custom,
@@ -66,6 +71,44 @@ def trend_chart(athlete_df, column: str, title: str, y_label: str,
                 connectgaps=True, line=dict(color=colors["rolling"], width=2, dash="dash"),
                 hovertemplate=f"Rolling avg: %{{y:.{decimals}f}}<extra></extra>",
             ))
+    valid = values.dropna().astype(float)
+    if len(valid) >= m.MIN_SESSIONS_FOR_REFERENCE_BAND:
+        mean = float(valid.mean())
+        sd = float(valid.std(ddof=1)) if len(valid) >= 2 else 0.0
+        fig.add_hline(
+            y=mean,
+            line=dict(color=colors["rolling"], width=1.5, dash="dot"),
+            annotation_text="Historical average",
+            annotation_position="bottom right",
+        )
+        if show_reference_band and sd > 0:
+            fig.add_hrect(
+                y0=mean - sd,
+                y1=mean + sd,
+                fillcolor=colors["rolling"],
+                opacity=0.10,
+                line_width=0,
+                annotation_text="Descriptive mean +/- 1 SD",
+                annotation_position="top left",
+            )
+    changes = m.pct_change_vs_previous(values)
+    latest_positions = np.flatnonzero(values.notna().to_numpy())
+    if len(latest_positions) >= 2:
+        latest_idx = int(latest_positions[-1])
+        change = changes.iloc[latest_idx]
+        if pd.notna(change):
+            fig.add_annotation(
+                x=athlete_df["match_date"].iloc[latest_idx],
+                y=values.iloc[latest_idx],
+                text=f"{change:+.1f}% vs previous",
+                showarrow=True,
+                arrowhead=2,
+                ax=0,
+                ay=-35,
+                bgcolor=colors["surface"],
+                bordercolor=colors["border"],
+                font=dict(color=colors["text"]),
+            )
     return _style(fig, title, y_label, theme)
 
 

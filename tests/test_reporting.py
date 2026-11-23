@@ -1,4 +1,5 @@
 """Tests for shared formatting, quality summaries, reports, and visual builders."""
+import re
 import sys
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src import charts, metrics as m, quality, report  # noqa: E402
+from src import charts, metrics as m, pdf_report, quality, report  # noqa: E402
 from src.cleaning import clean_pipeline  # noqa: E402
 from src.formatting import format_metric, format_minutes, format_percent  # noqa: E402
 from src import theme as theme_module  # noqa: E402
@@ -57,8 +58,24 @@ def test_report_calls_out_synthetic_scope_and_respects_analysis_eligibility(clea
     assert "SYNTHETIC DEMO DATA" in markdown
     assert "Missing measurements are not interpreted as zero." in markdown
     assert "Combined metrics" in markdown
+    assert "Performance overview" in markdown
+    assert "Statistical observations" in markdown
+    assert "Interpretive limitations" in markdown
+    assert "no tactical or medical conclusion" in markdown
     with pytest.raises(ValueError, match="No sessions found"):
         report.build_report(sessions, issues, "unknown-athlete")
+
+
+def test_pdf_report_is_a_multi_page_athlete_specific_document(cleaned_data):
+    sessions, issues = cleaned_data
+    athlete_id = sessions["athlete_id"].iloc[0]
+    payload = report.build_report(sessions, issues, athlete_id)
+    pdf = pdf_report.render_report_pdf(payload)
+
+    assert pdf.startswith(b"%PDF-")
+    assert pdf.rstrip().endswith(b"%%EOF")
+    assert len(pdf) > 10_000
+    assert len(re.findall(rb"/Type\s*/Page\b", pdf)) == 4
 
 
 def test_new_charts_build_for_real_cleaned_sessions(cleaned_data):
@@ -81,6 +98,26 @@ def test_new_charts_build_for_real_cleaned_sessions(cleaned_data):
     quality_map = charts.quality_map_chart(sessions)
     assert len(quality_map.data) == 1
     assert len(set(quality_map.data[0].x)) == sessions["match_id"].nunique()
+
+
+def test_trend_chart_supports_labels_reference_line_and_missing_gaps(cleaned_data):
+    sessions, _ = cleaned_data
+    athlete_id = sessions["athlete_id"].iloc[0]
+    athlete = m.add_per90_columns(
+        m.usable_sessions(sessions[sessions["athlete_id"] == athlete_id])
+    )
+    figure = charts.trend_chart(
+        athlete,
+        "sprint_count",
+        "Sprints",
+        "count",
+        decimals=0,
+        show_rolling=True,
+        show_labels=True,
+    )
+    match_trace = next(trace for trace in figure.data if trace.name == "Match value")
+    assert match_trace.connectgaps is False
+    assert match_trace.text is not None
 
 
 def test_chart_module_is_imported_from_project_package():

@@ -9,7 +9,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from src import charts  # noqa: E402
+from src import charts, metrics, report  # noqa: E402
 from src.cleaning import clean_pipeline  # noqa: E402
 
 APP = str(ROOT / "app" / "app.py")
@@ -24,6 +24,10 @@ def test_app_starts_with_synthetic_banner():
     at = run_app()
     assert not at.exception
     assert any("SYNTHETIC" in w.value for w in at.warning)
+    assert any(
+        button.label == "Download report (.pdf)"
+        for button in at.get("download_button")
+    )
 
 
 def test_app_reloads_chart_module_when_a_builder_is_missing(monkeypatch):
@@ -31,6 +35,20 @@ def test_app_reloads_chart_module_when_a_builder_is_missing(monkeypatch):
     at = run_app()
     assert not at.exception
     assert callable(charts.consistency_heatmap)
+
+
+def test_app_reloads_metrics_module_when_a_helper_is_missing(monkeypatch):
+    monkeypatch.delattr(metrics, "filter_sessions_by_date")
+    at = run_app()
+    assert not at.exception
+    assert callable(metrics.filter_sessions_by_date)
+
+
+def test_app_reloads_report_module_when_a_builder_is_missing(monkeypatch):
+    monkeypatch.delattr(report, "build_narrative")
+    at = run_app()
+    assert not at.exception
+    assert callable(report.build_narrative)
 
 
 def test_app_supports_light_and_dark_themes():

@@ -23,6 +23,20 @@ selected athletes, not league rankings or performance targets. Use the
 Appearance selector in the sidebar to switch the full dashboard and charts
 between light and dark themes.
 
+The Athlete workload report can be downloaded as a professionally formatted
+PDF with individual session-trend charts, historical comparisons, combined
+metrics, and data-quality limitations. Markdown and CSV downloads remain
+available. PDF charts use only the selected athlete's analysis-eligible
+sessions; missing observations remain gaps.
+
+Performance Trends and Workload & Consistency share an athlete-preserving
+date-range filter. Trend charts retain missing-value gaps and can show
+optional point labels, three-session rolling averages, historical averages,
+descriptive mean +/- 1 SD reference bands, and latest-session percentage
+change annotations. Selected match and report views also provide
+athlete-specific historical mean and median comparisons, with the evaluated
+session excluded and valid baseline sample counts shown.
+
 ## Reading the visuals responsibly
 
 The included cleaned sample contains 43 match-athlete sessions from six

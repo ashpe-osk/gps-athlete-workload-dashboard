@@ -22,10 +22,14 @@ from src import charts, metrics as m, quality, theme as theme_module  # noqa: E4
 from src.cleaning import clean_pipeline  # noqa: E402
 from src.formatting import format_metric, format_percent  # noqa: E402
 from src import report as report_builder  # noqa: E402
+from src import pdf_report as pdf_report_builder  # noqa: E402
 
 # Streamlit keeps imported modules in sys.modules across reruns.
 theme_module = importlib.reload(theme_module)
 charts = importlib.reload(charts)
+m = importlib.reload(m)
+report_builder = importlib.reload(report_builder)
+pdf_report_builder = importlib.reload(pdf_report_builder)
 app_css = theme_module.app_css
 
 st.set_page_config(
@@ -92,6 +96,24 @@ n_excluded = len(athlete_all) - len(athlete_use)
 if athlete_use.empty:
     st.info("This athlete has no usable sessions yet.")
     st.stop()
+
+range_min = athlete_use["match_date"].min().date()
+range_max = athlete_use["match_date"].max().date()
+with st.sidebar.container(border=True, key="date-range-card"):
+    st.markdown("#### Analysis date range")
+    date_range = st.date_input(
+        "Dates",
+        value=(range_min, range_max),
+        min_value=range_min,
+        max_value=range_max,
+        key="analysis_date_range",
+    )
+
+if isinstance(date_range, tuple) and len(date_range) == 2:
+    range_start, range_end = date_range
+else:
+    range_start, range_end = range_min, range_max
+athlete_range = m.filter_sessions_by_date(athlete_use, range_start, range_end)
 
 tabs = st.tabs(["Overview", "Athlete Profile", "Match Analysis", "Performance Trends",
                 "Workload & Consistency", "Comparison", "Report", "Data Quality"])
@@ -204,34 +226,64 @@ with tabs[2]:
             }), hide_index=True, width="stretch")
             st.caption("Per-90 values exist only for sessions of at least 45 minutes.")
 
+        with st.expander("Historical baseline for this session"):
+            baseline = m.historical_baseline_table(
+                athlete_use,
+                match_id=match_id,
+            )
+            baseline_display = pd.DataFrame({
+                "Metric": [m.METRIC_INFO[c][0] for c in baseline["column"]],
+                "This session": [fmt(c, v) for c, v in zip(baseline["column"], baseline["latest"])],
+                "Previous valid": [fmt(c, v) for c, v in zip(baseline["column"], baseline["previous"])],
+                "Historical mean": [fmt(c, v) for c, v in zip(baseline["column"], baseline["historical_mean"])],
+                "Historical median": [fmt(c, v) for c, v in zip(baseline["column"], baseline["historical_median"])],
+                "vs previous": [fmt_pct(v) or "—" for v in baseline["pct_previous"]],
+                "vs baseline": [fmt_pct(v) or "—" for v in baseline["pct_baseline"]],
+                "Baseline sessions": baseline["baseline_n"],
+            })
+            st.dataframe(baseline_display, hide_index=True, width="stretch")
+            st.caption(
+                "Baseline statistics use earlier analysis-eligible sessions only and exclude the session being evaluated. "
+                "Missing values remain missing; each baseline row reports the number of valid contributing sessions."
+            )
+
 # ------------------------------------------------------------------ D. Performance Trends
 with tabs[3]:
-    t1, t2 = st.columns(2)
+    t1, t2, t3 = st.columns(3)
     per90_on = t1.checkbox("Adjust volume metrics to per 90 minutes", value=False,
                            help="Removes the effect of playing fewer minutes. Sessions under 45 min are left out.")
     rolling_on = t2.checkbox("Show rolling average (3 sessions)", value=True)
+    labels_on = t3.checkbox("Show data labels", value=False)
 
-    trend_columns = ["total_distance_km", "hsr_distance_m", "sprint_count", "player_load_au", "distance_per_min"]
+    trend_columns = [
+        "total_distance_km", "hsr_distance_m", "sprint_count",
+        "player_load_au", "distance_per_min", "accel_count", "decel_count",
+    ]
     grid = st.columns(2)
-    for i, column in enumerate(trend_columns):
-        use_column = f"{column}_per90" if per90_on and column in m.VOLUME_COLUMNS else column
-        label, _, unit = m.METRIC_INFO[column]
-        suffix = " per 90" if use_column != column else ""
-        decimals = 2 if column == "total_distance_km" else 1 if column in ("distance_per_min", "player_load_au") else 0
-        fig = charts.trend_chart(
-            athlete_use, use_column, f"{label}{suffix}", f"{unit}{suffix}",
-            decimals, rolling_on, display_theme,
-        )
-        with grid[i % 2]:
-            st.plotly_chart(fig, width="stretch")
-            n_valid = int(athlete_use[use_column].notna().sum())
-            st.caption(f"Based on {n_valid} of {len(athlete_use)} sessions. Gaps = no valid measurement.")
+    if athlete_range.empty:
+        st.info("No analysis-eligible sessions fall within the selected date range.")
+    else:
+        for i, column in enumerate(trend_columns):
+            use_column = f"{column}_per90" if per90_on and column in m.VOLUME_COLUMNS else column
+            label, _, unit = m.METRIC_INFO[column]
+            suffix = " per 90" if use_column != column else ""
+            decimals = 2 if column == "total_distance_km" else 1 if column in ("distance_per_min", "player_load_au") else 0
+            fig = charts.trend_chart(
+                athlete_range, use_column, f"{label}{suffix}", f"{unit}{suffix}",
+                decimals, rolling_on, display_theme, labels_on,
+            )
+            with grid[i % 2]:
+                st.plotly_chart(fig, width="stretch")
+                n_valid = int(athlete_range[use_column].notna().sum())
+                st.caption(f"Based on {n_valid} of {len(athlete_range)} sessions. Gaps = no valid measurement.")
     st.caption("◆ = minutes approximate. Dashed line = average of the last 3 valid sessions (appears once 3 exist). "
+               "Reference bands, when shown, are descriptive mean +/- 1 SD bands requiring at least "
+               f"{m.MIN_SESSIONS_FOR_REFERENCE_BAND} valid observations. "
                + (f"{n_excluded} session(s) excluded for suspected sensor dropout." if n_excluded else ""))
 
     st.markdown("#### Match intensity profile")
     st.plotly_chart(
-        charts.match_intensity_scatter(athlete_use, display_theme),
+        charts.match_intensity_scatter(athlete_range, display_theme),
         width="stretch",
     )
     st.caption(
@@ -240,20 +292,22 @@ with tabs[3]:
     )
 
     with st.expander("Match-to-match % change"):
-        change_table = pd.DataFrame({"Date": athlete_use["match_date"].dt.strftime("%d %b %Y")})
+        change_table = pd.DataFrame({"Date": athlete_range["match_date"].dt.strftime("%d %b %Y")})
         for column in trend_columns:
-            change_table[m.METRIC_INFO[column][0]] = m.pct_change_vs_previous(athlete_use[column]).round(1)
+            change_table[m.METRIC_INFO[column][0]] = m.pct_change_vs_previous(athlete_range[column]).round(1)
         st.dataframe(change_table, hide_index=True, width="stretch")
         st.caption("Change vs the previous session that has a value for that metric. Blank = no earlier value.")
 
 # ------------------------------------------------------------------ E. Workload & Consistency
 with tabs[4]:
     st.subheader("Workload consistency")
+    if athlete_range.empty:
+        st.info("No analysis-eligible sessions fall within the selected date range.")
     st.caption(
         "Variation is summarized as coefficient of variation (CV). Volume metrics are shown per 90 "
         "where sessions are long enough, so playing time has less influence."
     )
-    consistency = m.consistency_table(athlete_use)
+    consistency = m.consistency_table(athlete_range)
     consistency_display = consistency.rename(columns={
         "metric": "Metric", "basis": "Basis", "n": "Valid sessions",
         "mean": "Mean", "sd": "Standard deviation", "cv_pct": "CV (%)",
@@ -277,13 +331,13 @@ with tabs[4]:
     left, right = st.columns(2)
     with left:
         st.plotly_chart(
-            charts.consistency_heatmap(athlete_use, display_theme),
+            charts.consistency_heatmap(athlete_range, display_theme),
             width="stretch",
         )
         st.caption("Color shows within-athlete standard deviations from the athlete's own mean.")
     with right:
         st.plotly_chart(
-            charts.workload_composition_chart(athlete_use, display_theme),
+            charts.workload_composition_chart(athlete_range, display_theme),
             width="stretch",
         )
         st.caption("High-speed distance is a subset of total distance. Sessions missing either value are omitted.")
@@ -380,6 +434,9 @@ with tabs[6]:
         f"{len(report_data['sessions'])} analysis-eligible sessions"
     )
     st.info("This downloadable report is a synthetic-data demonstration, not an assessment of a real athlete.")
+    st.markdown("#### Automated observations")
+    for observation in report_builder.build_narrative(report_data):
+        st.markdown(f"- **{observation['section']}:** {observation['text']}")
     st.markdown("#### Combined metrics")
     report_metrics = report_data["metrics"]
     st.dataframe(
@@ -395,19 +452,30 @@ with tabs[6]:
         hide_index=True,
         width="stretch",
     )
-    st.download_button(
+    report_pdf = pdf_report_builder.render_report_pdf(report_data)
+    pdf_button, markdown_button, csv_button = st.columns(3)
+    pdf_button.download_button(
+        "Download report (.pdf)",
+        data=report_pdf,
+        file_name=f"{selected_id.lower()}_workload_report.pdf",
+        mime="application/pdf",
+        type="primary",
+        use_container_width=True,
+    )
+    markdown_button.download_button(
         "Download report (.md)",
         data=report_markdown,
         file_name=f"{selected_id.lower()}_workload_report.md",
         mime="text/markdown",
-        type="primary",
+        use_container_width=True,
     )
     report_csv = report_metrics.to_csv(index=False).encode("utf-8")
-    st.download_button(
+    csv_button.download_button(
         "Download metrics (.csv)",
         data=report_csv,
         file_name=f"{selected_id.lower()}_workload_metrics.csv",
         mime="text/csv",
+        use_container_width=True,
     )
     with st.expander("Preview full report"):
         st.markdown(report_markdown)

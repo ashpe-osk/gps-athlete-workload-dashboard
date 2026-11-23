@@ -20,7 +20,17 @@ def build_report(sessions: pd.DataFrame, issues: pd.DataFrame, athlete_id: str) 
         issues["session_id"].isin(athlete_all["session_id"])
     ] if "session_id" in issues else issues
 
-    return {
+    consistency = m.consistency_table(athlete_usable)
+    latest_baseline = (
+        m.historical_baseline_table(
+            athlete_usable,
+            match_id=athlete_usable.iloc[-1]["match_id"],
+        )
+        if not athlete_usable.empty
+        else pd.DataFrame()
+    )
+
+    report_payload = {
         "athlete_id": athlete_id,
         "athlete_name": str(athlete_all.iloc[0]["athlete_name"]),
         "position": str(athlete_all.iloc[0]["position"]),
@@ -30,9 +40,73 @@ def build_report(sessions: pd.DataFrame, issues: pd.DataFrame, athlete_id: str) 
         "sessions": athlete_usable,
         "all_sessions": athlete_all,
         "metrics": stats,
+        "consistency": consistency,
+        "latest_baseline": latest_baseline,
         "quality": quality_summary(athlete_all, athlete_issues),
         "issues": athlete_issues.copy(),
     }
+    report_payload["narrative"] = build_narrative(report_payload)
+    return report_payload
+
+
+def build_narrative(report: dict) -> list[dict[str, str]]:
+    """Create concise, evidence-labeled observations without tactical or medical claims."""
+    observations = []
+    latest_baseline = report["latest_baseline"]
+    if latest_baseline is not None and not latest_baseline.empty:
+        for row in latest_baseline.itertuples(index=False):
+            label = m.METRIC_INFO[row.column][0]
+            changes = []
+            if pd.notna(row.pct_previous):
+                changes.append(f"{row.pct_previous:+.1f}% from the previous valid session")
+            if pd.notna(row.pct_baseline):
+                changes.append(f"{row.pct_baseline:+.1f}% from the historical mean")
+            if changes:
+                observations.append({
+                    "section": "Statistical observation",
+                    "text": f"{label}: " + "; ".join(changes) + f" (baseline n={row.baseline_n}).",
+                })
+
+    consistency = report["consistency"]
+    per_match = consistency.loc[
+        consistency["basis"] == "per match",
+        ["metric", "n", "cv_pct", "low_confidence"],
+    ].dropna(subset=["cv_pct"])
+    if len(per_match) >= 2:
+        median_cv = float(per_match["cv_pct"].median())
+        high = per_match[
+            (per_match["cv_pct"] >= median_cv * 1.5)
+            & (~per_match["low_confidence"].astype(bool))
+        ].sort_values("cv_pct", ascending=False)
+        if not high.empty:
+            names = ", ".join(
+                f"{row.metric} ({row.cv_pct:.1f}% CV)"
+                for row in high.head(3).itertuples(index=False)
+            )
+            observations.append({
+                "section": "Statistical observation",
+                "text": f"Higher variation was observed in: {names}. These are relative descriptive comparisons, not workload limits.",
+            })
+
+    quality = report["quality"]
+    excluded = int(quality["excluded_sessions"])
+    missing = int(quality["missing_measurements"])
+    invalid = int(quality["invalid_measurements"])
+    observations.append({
+        "section": "Statistical observation",
+        "text": (
+            f"{excluded} session(s) were excluded by the data-quality screen; "
+            f"{missing} missing and {invalid} invalid measurement issue records were present."
+        ),
+    })
+    observations.append({
+        "section": "Interpretation",
+        "text": (
+            "Observed differences describe this synthetic dataset only. Device configuration, small samples, "
+            "playing context, and missing observations limit interpretation; no tactical or medical conclusion is implied."
+        ),
+    })
+    return observations
 
 
 def render_report_markdown(report: dict) -> str:
@@ -56,11 +130,38 @@ def render_report_markdown(report: dict) -> str:
         "Totals and pooled rates use available measurements; peaks use the maximum valid value. "
         "Missing measurements are not interpreted as zero.",
         "",
+        "## Performance overview",
+        "",
+        (
+            f"Latest eligible session: {report['sessions'].iloc[-1]['match_date']:%d %b %Y}. "
+            "The automated observations below compare valid measurements with the previous valid session "
+            "and with earlier athlete-specific historical observations."
+            if not report["sessions"].empty
+            else "No analysis-eligible sessions were available."
+        ),
+        "",
+        "## Statistical observations",
+        "",
+    ]
+    for observation in build_narrative(report):
+        if observation["section"] == "Statistical observation":
+            lines.append(f"- {observation['text']}")
+
+    lines.extend([
+        "",
+        "## Interpretive limitations",
+        "",
+    ])
+    for observation in build_narrative(report):
+        if observation["section"] == "Interpretation":
+            lines.append(f"- {observation['text']}")
+
+    lines.extend([
         "## Combined metrics",
         "",
         "| Metric | Value | Aggregation | Valid sessions |",
         "|---|---:|---|---:|",
-    ]
+    ])
     for row in report["metrics"].itertuples(index=False):
         lines.append(
             f"| {row.metric} | {format_metric(row.column, row.value)} | "
