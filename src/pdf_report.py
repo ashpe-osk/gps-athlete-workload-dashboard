@@ -1,6 +1,7 @@
 """Create a polished, athlete-specific PDF report with vector trend charts."""
 from html import escape
 from io import BytesIO
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -9,8 +10,12 @@ from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     Flowable,
+    HRFlowable,
+    KeepTogether,
     PageBreak,
     Paragraph,
     SimpleDocTemplate,
@@ -20,32 +25,121 @@ from reportlab.platypus import (
 )
 
 from . import metrics as m
-from .formatting import format_metric, format_percent
-from .theme import BRAND
+from .formatting import DECIMAL_PLACES, classify_change, format_metric, format_percent
+from .theme import CHANGE_LEGEND, REPORT_COLORS, colors_for
 
 
 PAGE_WIDTH, PAGE_HEIGHT = letter
-INK = colors.HexColor("#17212B")
-MUTED = colors.HexColor("#64748B")
-PALE = colors.HexColor("#F4F6F8")
-GRID = colors.HexColor("#E5EAF0")
-ACCENT = colors.HexColor(BRAND)
-BLUE = colors.HexColor("#2563EB")
-GREEN = colors.HexColor("#047857")
-CHART_COLORS = [ACCENT, BLUE, GREEN]
+FONT_DIR = Path(__file__).resolve().parents[1] / "assets" / "fonts"
+FONT_NAMES = {
+    "regular": "Inter-Regular",
+    "medium": "Inter-Medium",
+    "semibold": "Inter-SemiBold",
+    "bold": "Inter-Bold",
+}
+INK = colors.HexColor(REPORT_COLORS["ink"])
+SECONDARY = colors.HexColor(REPORT_COLORS["secondary"])
+MUTED = colors.HexColor(REPORT_COLORS["muted"])
+PALE = colors.HexColor(REPORT_COLORS["pale"])
+GRID = colors.HexColor(REPORT_COLORS["grid"])
+ACCENT = colors.HexColor(REPORT_COLORS["accent"])
+BLUE = colors.HexColor(REPORT_COLORS["blue"])
+PAPER = colors.HexColor(REPORT_COLORS["paper"])
+LIGHT_CHANGE_COLORS = colors_for("Light")
+
+
+def _register_fonts():
+    """Register embedded Inter faces with tabular numeral glyphs."""
+    registered = set(pdfmetrics.getRegisteredFontNames())
+    for font_name in FONT_NAMES.values():
+        if font_name not in registered:
+            path = FONT_DIR / f"{font_name}.ttf"
+            pdfmetrics.registerFont(TTFont(font_name, str(path)))
+    pdfmetrics.registerFontFamily(
+        "Inter",
+        normal=FONT_NAMES["regular"],
+        bold=FONT_NAMES["bold"],
+        italic=FONT_NAMES["medium"],
+        boldItalic=FONT_NAMES["semibold"],
+    )
+
+
+class NoWrapText(Flowable):
+    """Draw a single-line table value or note without allowing a line break."""
+
+    def __init__(
+        self,
+        text: str,
+        font_name: str,
+        font_size: float,
+        color=INK,
+        align: str = "LEFT",
+        badge: bool = False,
+        padding: float = 0,
+        allow_condense: bool = False,
+    ):
+        super().__init__()
+        self.text = text
+        self.font_name = font_name
+        self.font_size = font_size
+        self.color = color
+        self.align = align
+        self.badge = badge
+        self.padding = padding
+        self.allow_condense = allow_condense
+        self.text_width = pdfmetrics.stringWidth(text, font_name, font_size)
+        self.horizontal_scale = 1.0
+
+    def wrap(self, available_width, _):
+        text_width = self.text_width + (2 * self.padding if self.badge else 0)
+        self.horizontal_scale = min(1.0, available_width / text_width) if text_width else 1.0
+        if self.horizontal_scale < 1 and (
+            not self.allow_condense or self.horizontal_scale < 0.9
+        ):
+            raise ValueError(f"Non-wrapping text does not fit: {self.text!r}")
+        self.width = (
+            text_width * self.horizontal_scale
+            if self.badge
+            else available_width
+        )
+        self.height = self.font_size + (5 if self.badge else 3)
+        return self.width, self.height
+
+    def draw(self):
+        canvas = self.canv
+        canvas.saveState()
+        if self.badge:
+            canvas.setFillColor(PALE)
+            canvas.setStrokeColor(GRID)
+            canvas.roundRect(0, 0, self.width, self.height, 4, stroke=1, fill=1)
+        canvas.setFillColor(self.color)
+        text_width = self.text_width * self.horizontal_scale
+        if self.badge:
+            x = self.padding
+        elif self.align == "RIGHT":
+            x = self.width - text_width
+        else:
+            x = 0
+        baseline = (self.height - self.font_size) / 2
+        text = canvas.beginText(x, baseline)
+        text.setFont(self.font_name, self.font_size)
+        text.setHorizScale(self.horizontal_scale * 100)
+        text.textOut(self.text)
+        canvas.drawText(text)
+        canvas.restoreState()
 
 
 class MetricTrendChart(Flowable):
     """Draw a compact per-athlete time series while preserving missing-data gaps."""
 
-    def __init__(self, sessions: pd.DataFrame, column: str, width: float, height: float = 178):
+    def __init__(self, sessions: pd.DataFrame, column: str, width: float, height: float = 150):
         super().__init__()
         self.sessions = sessions
         self.column = column
         self.width = width
         self.height = height
 
-    def wrap(self, available_width, available_height):
+    def wrap(self, available_width, _):
         return min(self.width, available_width), self.height
 
     def draw(self):
@@ -58,21 +152,22 @@ class MetricTrendChart(Flowable):
 
         canvas.saveState()
         canvas.setStrokeColor(GRID)
-        canvas.setFillColor(colors.white)
+        canvas.setFillColor(PAPER)
         canvas.roundRect(0, 0, width, height, 7, stroke=1, fill=1)
         canvas.setFillColor(INK)
-        canvas.setFont("Helvetica-Bold", 9)
+        canvas.setFont(FONT_NAMES["semibold"], 11)
         canvas.drawString(10, height - 15, f"{label} ({unit})")
+        self._draw_legend(canvas, height)
 
         if not valid.any():
             canvas.setFillColor(MUTED)
-            canvas.setFont("Helvetica", 8)
+            canvas.setFont(FONT_NAMES["regular"], 9)
             canvas.drawCentredString(width / 2, height / 2, "No valid measurements in eligible sessions")
             canvas.restoreState()
             return
 
-        left, right = 42, width - 12
-        bottom, top = 31, height - 37
+        left, right = 35, width - 17
+        bottom, top = 31, height - 57
         observed = values[valid]
         low, high = float(observed.min()), float(observed.max())
         span = high - low
@@ -83,7 +178,7 @@ class MetricTrendChart(Flowable):
         def y_coord(value):
             return bottom + (value - low) / (high - low) * (top - bottom)
 
-        canvas.setFont("Helvetica", 6.5)
+        canvas.setFont(FONT_NAMES["regular"], 9)
         canvas.setFillColor(MUTED)
         for step in range(4):
             value = low + (high - low) * step / 3
@@ -109,9 +204,6 @@ class MetricTrendChart(Flowable):
             canvas.setLineWidth(0.8)
             canvas.line(left, mean_y, right, mean_y)
             canvas.restoreState()
-            canvas.setFillColor(BLUE)
-            canvas.setFont("Helvetica", 6)
-            canvas.drawRightString(right, min(top - 3, mean_y + 3), "Historical mean")
 
         canvas.setStrokeColor(ACCENT)
         canvas.setFillColor(ACCENT)
@@ -127,23 +219,135 @@ class MetricTrendChart(Flowable):
             canvas.circle(point[0], point[1], 2.2, stroke=0, fill=1)
             previous = point
 
-        date_indexes = sorted(set(
-            np.linspace(0, count - 1, num=min(5, count), dtype=int).tolist()
-        ))
-        canvas.setFillColor(MUTED)
-        canvas.setFont("Helvetica", 6.5)
-        for index in date_indexes:
-            date_label = pd.Timestamp(sessions.iloc[index]["match_date"]).strftime("%d %b")
-            canvas.drawCentredString(x_positions[index], bottom - 12, date_label)
+        date_indexes = range(count)
+        date_labels = [
+            pd.Timestamp(sessions.iloc[index]["match_date"]).strftime("%d %b")
+            for index in date_indexes
+        ]
+        date_widths = [
+            pdfmetrics.stringWidth(label, FONT_NAMES["regular"], 9)
+            for label in date_labels
+        ]
+        date_spacing = (right - left) / (count - 1) if count > 1 else width
+        split_date_labels = max(date_widths, default=0) > date_spacing
+        if split_date_labels:
+            date_labels = [
+                pd.Timestamp(sessions.iloc[index]["match_date"]).strftime("%d/%m")
+                for index in date_indexes
+            ]
+            date_widths = [
+                pdfmetrics.stringWidth(label, FONT_NAMES["regular"], 9)
+                for label in date_labels
+            ]
+            split_date_labels = max(date_widths, default=0) > date_spacing
 
         canvas.setFillColor(MUTED)
-        canvas.setFont("Helvetica", 6.5)
+        canvas.setFont(FONT_NAMES["regular"], 9)
+        for index, date_label in zip(date_indexes, date_labels):
+            if split_date_labels:
+                date = pd.Timestamp(sessions.iloc[index]["match_date"])
+                canvas.drawCentredString(x_positions[index], bottom - 12, date.strftime("%d"))
+                canvas.drawCentredString(x_positions[index], bottom - 22, date.strftime("%b"))
+            else:
+                canvas.drawCentredString(x_positions[index], bottom - 12, date_label)
+
+        canvas.setFillColor(MUTED)
+        canvas.restoreState()
+
+    @staticmethod
+    def _draw_legend(canvas, height):
+        legend_y = height - 33
+        canvas.setStrokeColor(ACCENT)
+        canvas.setLineWidth(1.5)
+        canvas.line(10, legend_y + 3, 22, legend_y + 3)
+        canvas.setFillColor(MUTED)
+        canvas.setFont(FONT_NAMES["regular"], 9)
+        canvas.drawString(26, legend_y, "Metric")
+        canvas.saveState()
+        canvas.setStrokeColor(BLUE)
+        canvas.setDash(2, 2)
+        canvas.setLineWidth(1)
+        canvas.line(77, legend_y + 3, 89, legend_y + 3)
+        canvas.restoreState()
+        canvas.setFillColor(MUTED)
+        canvas.drawString(93, legend_y, "Historical mean")
+
+
+class ChartLegendKey(Flowable):
+    """Explain the session and historical-reference lines in the empty grid cell."""
+
+    def __init__(self, width: float, height: float = 150):
+        super().__init__()
+        self.width = width
+        self.height = height
+
+    def wrap(self, available_width, _):
+        return min(self.width, available_width), self.height
+
+    def draw(self):
+        canvas = self.canv
+        canvas.saveState()
+        canvas.setStrokeColor(GRID)
+        canvas.setFillColor(PAPER)
+        canvas.roundRect(0, 0, self.width, self.height, 7, stroke=1, fill=1)
+        canvas.setFillColor(INK)
+        canvas.setFont(FONT_NAMES["semibold"], 11)
+        canvas.drawString(10, self.height - 19, "How to read these charts")
+        canvas.setStrokeColor(ACCENT)
+        canvas.setLineWidth(1.5)
+        canvas.line(12, self.height - 43, 32, self.height - 43)
+        canvas.setFillColor(INK)
+        canvas.setFont(FONT_NAMES["regular"], 9)
+        canvas.drawString(39, self.height - 46, "Metric")
+        canvas.saveState()
+        canvas.setStrokeColor(BLUE)
+        canvas.setDash(2, 2)
+        canvas.setLineWidth(1)
+        canvas.line(12, self.height - 66, 32, self.height - 66)
+        canvas.restoreState()
+        canvas.setFillColor(INK)
+        canvas.drawString(39, self.height - 69, "Historical mean")
+        canvas.setFillColor(MUTED)
+        canvas.drawString(12, self.height - 94, "Reference shown with at least")
         canvas.drawString(
-            left,
-            8,
-            f"{int(valid.sum())} valid of {count} eligible sessions"
-            + (f" | mean n={int(valid.sum())}" if valid.sum() >= m.MIN_SESSIONS_FOR_REFERENCE_BAND else ""),
+            12, self.height - 107,
+            f"{m.MIN_SESSIONS_FOR_REFERENCE_BAND} valid measurements.",
         )
+        canvas.drawString(12, self.height - 130, "Each date is one eligible session;")
+        canvas.drawString(12, self.height - 143, "gaps show missing measurements.")
+        canvas.restoreState()
+
+
+class KpiCard(Flowable):
+    """Render a KPI label, value, and optional count on separate baselines."""
+
+    def __init__(self, metric: str, value: str, count_note: str, width: float):
+        super().__init__()
+        self.metric = metric
+        self.value = value
+        self.count_note = count_note
+        self.width = width
+        self.height = 70
+
+    def wrap(self, available_width, _):
+        return min(self.width, available_width), self.height
+
+    def draw(self):
+        canvas = self.canv
+        canvas.saveState()
+        canvas.setStrokeColor(GRID)
+        canvas.setFillColor(PALE)
+        canvas.roundRect(3, 3, self.width - 6, self.height - 6, 6, stroke=1, fill=1)
+        canvas.setFillColor(MUTED)
+        canvas.setFont(FONT_NAMES["medium"], 10.5)
+        canvas.drawString(12, self.height - 18, self.metric)
+        canvas.setFillColor(INK)
+        canvas.setFont(FONT_NAMES["bold"], 22)
+        canvas.drawString(12, self.height - 44, self.value)
+        if self.count_note:
+            canvas.setFillColor(MUTED)
+            canvas.setFont(FONT_NAMES["regular"], 9)
+            canvas.drawString(12, 9, self.count_note)
         canvas.restoreState()
 
 
@@ -151,50 +355,96 @@ def _styles():
     base = getSampleStyleSheet()
     return {
         "title": ParagraphStyle(
-            "ReportTitle", parent=base["Title"], fontName="Helvetica-Bold",
-            fontSize=23, leading=27, textColor=INK, alignment=TA_LEFT, spaceAfter=5,
+            "ReportTitle", parent=base["Title"], fontName=FONT_NAMES["bold"],
+            fontSize=24, leading=29, textColor=INK, alignment=TA_LEFT, spaceAfter=5,
         ),
-        "subtitle": ParagraphStyle(
-            "ReportSubtitle", parent=base["Normal"], fontSize=10, leading=14,
-            textColor=MUTED, spaceAfter=4,
+        "athlete": ParagraphStyle(
+            "ReportAthlete", parent=base["Normal"], fontName=FONT_NAMES["semibold"],
+            fontSize=16, leading=20, textColor=INK, spaceAfter=4,
+        ),
+        "period": ParagraphStyle(
+            "ReportPeriod", parent=base["Normal"], fontName=FONT_NAMES["regular"],
+            fontSize=11, leading=14, textColor=SECONDARY, spaceAfter=4,
         ),
         "section": ParagraphStyle(
-            "ReportSection", parent=base["Heading2"], fontName="Helvetica-Bold",
-            fontSize=13, leading=16, textColor=INK, spaceBefore=8, spaceAfter=7,
+            "ReportSection", parent=base["Heading2"], fontName=FONT_NAMES["bold"],
+            fontSize=15, leading=18, textColor=INK, spaceBefore=8, spaceAfter=7,
         ),
         "body": ParagraphStyle(
-            "ReportBody", parent=base["BodyText"], fontSize=8.5, leading=12,
+            "ReportBody", parent=base["BodyText"], fontName=FONT_NAMES["regular"],
+            fontSize=11, leading=14,
             textColor=INK, spaceAfter=5,
         ),
         "small": ParagraphStyle(
-            "ReportSmall", parent=base["BodyText"], fontSize=7.2, leading=9.5,
-            textColor=MUTED, spaceAfter=3,
+            "ReportSmall", parent=base["BodyText"], fontName=FONT_NAMES["regular"],
+            fontSize=9, leading=11, textColor=MUTED, spaceAfter=3,
+        ),
+        "notes": ParagraphStyle(
+            "ReportNotes", parent=base["BodyText"], fontName=FONT_NAMES["regular"],
+            fontSize=11, leading=14, textColor=INK, spaceAfter=3,
+        ),
+        "caption": ParagraphStyle(
+            "ReportCaption", parent=base["BodyText"], fontName=FONT_NAMES["regular"],
+            fontSize=11, leading=14, textColor=MUTED, spaceAfter=3,
+        ),
+        "table": ParagraphStyle(
+            "ReportTable", parent=base["BodyText"], fontName=FONT_NAMES["regular"],
+            fontSize=10.5, leading=13, textColor=INK,
+        ),
+        "table_metric": ParagraphStyle(
+            "ReportTableMetric", parent=base["BodyText"], fontName=FONT_NAMES["regular"],
+            fontSize=10.5, leading=13, textColor=INK, splitLongWords=0,
+        ),
+        "table_header": ParagraphStyle(
+            "ReportTableHeader", parent=base["BodyText"], fontName=FONT_NAMES["semibold"],
+            fontSize=10, leading=12, textColor=INK,
         ),
         "callout": ParagraphStyle(
-            "ReportCallout", parent=base["BodyText"], fontName="Helvetica-Bold",
-            fontSize=8.3, leading=11, textColor=colors.HexColor("#593A00"),
+            "ReportCallout", parent=base["BodyText"], fontName=FONT_NAMES["bold"],
+            fontSize=11, leading=14, textColor=colors.HexColor(REPORT_COLORS["warning"]),
         ),
     }
 
 
-def _table(data, widths, header=True, font_size=7.5):
-    table = Table(data, colWidths=widths, repeatRows=1 if header else 0, hAlign="LEFT")
+def _table(data, width):
+    styles = _styles()
+    cells = []
+    for row_index, row in enumerate(data):
+        rendered_row = []
+        for column_index, value in enumerate(row):
+            if isinstance(value, Flowable):
+                rendered_row.append(value)
+            elif column_index == 0 and row_index:
+                rendered_row.append(Paragraph(escape(str(value)), styles["table_metric"]))
+            else:
+                is_header = row_index == 0
+                font_name = FONT_NAMES["semibold"] if is_header else FONT_NAMES["regular"]
+                font_size = 10 if is_header else 10.5
+                rendered_row.append(NoWrapText(
+                    str(value),
+                    font_name,
+                    font_size,
+                    color=INK,
+                    align="LEFT" if column_index == 0 else "RIGHT",
+                    allow_condense=is_header and column_index == 4,
+                ))
+        cells.append(rendered_row)
+
+    column_widths = [width * 0.32] + [width * 0.68 / 5] * 5
+    table = Table(cells, colWidths=column_widths, repeatRows=1, hAlign="LEFT")
     commands = [
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
-        ("FONTSIZE", (0, 0), (-1, -1), font_size),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (4, 0), (4, -1), 0.5),
+        ("RIGHTPADDING", (4, 0), (4, -1), 0.5),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
         ("TEXTCOLOR", (0, 0), (-1, -1), INK),
-        ("GRID", (0, 0), (-1, -1), 0.35, GRID),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.35, GRID),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("BACKGROUND", (0, 0), (-1, 0), PALE),
     ]
-    if header:
-        commands.extend([
-            ("BACKGROUND", (0, 0), (-1, 0), PALE),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ])
     table.setStyle(TableStyle(commands))
     return table
 
@@ -204,81 +454,196 @@ def _page_chrome(canvas, doc):
     canvas.setFillColor(ACCENT)
     canvas.rect(0, PAGE_HEIGHT - 7, PAGE_WIDTH, 7, stroke=0, fill=1)
     canvas.setStrokeColor(GRID)
-    canvas.line(doc.leftMargin, 30, PAGE_WIDTH - doc.rightMargin, 30)
-    canvas.setFillColor(MUTED)
-    canvas.setFont("Helvetica", 7)
-    canvas.drawString(doc.leftMargin, 19, "SYNTHETIC DATA | Independent portfolio prototype")
-    canvas.drawRightString(PAGE_WIDTH - doc.rightMargin, 19, f"Page {doc.page}")
+    canvas.line(doc.leftMargin, 52, PAGE_WIDTH - doc.rightMargin, 52)
+    canvas.setFillColor(INK)
+    canvas.setFont(FONT_NAMES["medium"], 11)
+    canvas.drawCentredString(PAGE_WIDTH / 2, 36, str(doc.page))
     canvas.restoreState()
-
-
-def _metric_rows(report):
-    rows = [["Metric", "Combined value", "Valid sessions", "Aggregation"]]
-    for row in report["metrics"].itertuples(index=False):
-        rows.append([
-            row.metric,
-            format_metric(row.column, row.value),
-            f"{row.n_valid} of {row.n_sessions}",
-            row.method,
-        ])
-    return rows
 
 
 def _baseline_rows(report):
     rows = [[
-        "Metric", "Latest", "Previous", "Historical mean",
-        "Historical median", "Change vs mean", "Baseline n",
+        "Metric", "Latest", "Previous", "Hist. mean", "Change vs mean", "Base n",
     ]]
     for row in report["latest_baseline"].itertuples(index=False):
+        label, _, unit = m.METRIC_INFO[row.column]
         rows.append([
-            m.METRIC_INFO[row.column][0],
-            format_metric(row.column, row.latest),
-            format_metric(row.column, row.previous),
-            format_metric(row.column, row.historical_mean),
-            format_metric(row.column, row.historical_median),
-            format_percent(row.pct_baseline) or "-",
+            f"{label} ({unit})",
+            _format_number(row.column, row.latest),
+            _format_number(row.column, row.previous),
+            _format_number(row.column, row.historical_mean),
+            _comparison_change(row.pct_baseline),
             str(row.baseline_n),
         ])
     return rows
 
 
-def _chart_grid(sessions, columns, width):
-    chart_width = (width - 10) / 2
+def _format_number(column, value):
+    if pd.isna(value):
+        return "—"
+    decimals = DECIMAL_PLACES[column]
+    return f"{float(value):,.{decimals}f}"
+
+
+def _compact_flag(flag):
+    prefix = "High variation (CV "
+    if flag.startswith(prefix) and flag.endswith(")"):
+        return f"High CV {flag[len(prefix):-1]}"
+    return flag
+
+
+def _observation_note_lines(report):
+    parts = str(report["notes"]).split(" | ")
+    variation = parts[0].replace("High-speed running ", "HSR ").replace(", ", " · ")
+    quality = " · ".join(parts[1:])
+    return [variation, quality] if quality else [variation]
+
+
+def _comparison_change(value):
+    if pd.isna(value):
+        label = "—"
+    elif abs(float(value)) < 0.05:
+        label = "– 0.0%"
+    else:
+        arrow = "▲" if value > 0 else "▼"
+        label = f"{arrow} {format_percent(value)}"
+    token, bold = classify_change(value)
+    return NoWrapText(
+        label,
+        FONT_NAMES["bold"] if bold else FONT_NAMES["regular"],
+        10.5,
+        color=colors.HexColor(LIGHT_CHANGE_COLORS[token]),
+        align="RIGHT",
+    )
+
+
+def _change_markup(label, value):
+    if not label or label == "—":
+        label = "—"
+    token, bold = classify_change(value)
+    color = LIGHT_CHANGE_COLORS[token]
+    font_name = FONT_NAMES["bold"] if bold else FONT_NAMES["regular"]
+    return f'<font name="{font_name}" color="{color}">{escape(label)}</font>'
+
+
+def _observation_rows(report):
+    data = [[
+        "Metric", "Latest", "vs previous session", "vs historical mean", "Flag",
+    ]]
+    for _, row in report["observations"].iterrows():
+        latest = escape(str(row["Latest"]))
+        data.append([
+            escape(str(row["Metric"])),
+            NoWrapText(
+                latest,
+                FONT_NAMES["regular"],
+                10.5,
+                color=INK,
+                align="RIGHT",
+            ),
+            Paragraph(
+                _change_markup(row["vs previous session"], row["pct_previous"]),
+                _styles()["table"],
+            ),
+            Paragraph(
+                _change_markup(row["vs historical mean"], row["pct_historical_mean"]),
+                _styles()["table"],
+            ),
+            (
+                NoWrapText(
+                    _compact_flag(str(row["Flag"])),
+                    FONT_NAMES["medium"],
+                    10.5,
+                    color=SECONDARY,
+                    badge=True,
+                    padding=5,
+                )
+                if row["Flag"]
+                else Paragraph("", _styles()["table"])
+            ),
+        ])
+    return data
+
+
+def _observation_table(report, width):
+    column_widths = [width * percent for percent in (0.26, 0.20, 0.18, 0.18, 0.18)]
+    table = Table(
+        _observation_rows(report),
+        colWidths=column_widths,
+        repeatRows=1,
+        hAlign="LEFT",
+    )
+    commands = [
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BACKGROUND", (0, 0), (-1, 0), PALE),
+        ("FONTNAME", (0, 0), (-1, -1), FONT_NAMES["regular"]),
+        ("FONTSIZE", (0, 0), (-1, -1), 10.5),
+        ("FONTNAME", (0, 0), (-1, 0), FONT_NAMES["semibold"]),
+        ("FONTSIZE", (0, 0), (-1, 0), 10),
+        ("TEXTCOLOR", (0, 0), (-1, -1), INK),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.7, GRID),
+        ("ALIGN", (1, 1), (3, -1), "RIGHT"),
+    ]
+    for row_index in range(2, len(report["observations"]) + 1, 2):
+        commands.append(("BACKGROUND", (0, row_index), (-1, row_index), PALE))
+    for row_index in range(1, len(report["observations"]) + 1):
+        commands.append(("LINEBELOW", (0, row_index), (-1, row_index), 0.35, GRID))
+    table.setStyle(TableStyle(commands))
+    return table
+
+
+def _chart_grid_rows(sessions, columns, width):
+    chart_width = (width - 4) / 2
     charts = [
         MetricTrendChart(sessions, column, chart_width)
         for column in columns
     ]
-    data = []
+    rows = []
     for index in range(0, len(charts), 2):
         left = charts[index]
-        right = charts[index + 1] if index + 1 < len(charts) else ""
-        data.append([left, right])
-    table = Table(
-        data,
-        colWidths=[chart_width + 5, chart_width + 5],
-        rowHeights=[186] * len(data),
-        hAlign="LEFT",
-    )
-    table.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ]))
-    return table
+        right = (
+            charts[index + 1]
+            if index + 1 < len(charts)
+            else ChartLegendKey(chart_width)
+        )
+        row = Table(
+            [[left, right]],
+            colWidths=[chart_width + 2, chart_width + 2],
+            rowHeights=[158],
+            hAlign="LEFT",
+        )
+        row.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        rows.append(row)
+    return rows
+
+
+def _kpi_count_note(column, valid_count, eligible_count):
+    if column == "top_speed_kmh" and int(valid_count) != eligible_count:
+        return f"{int(valid_count)} of {eligible_count} sessions"
+    return ""
 
 
 def render_report_pdf(report: dict) -> bytes:
-    """Render a professional, multi-page PDF with charts for the selected athlete."""
+    """Render a concise athlete-specific report with charts and compact comparisons."""
+    _register_fonts()
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
         pagesize=letter,
-        leftMargin=0.55 * inch,
-        rightMargin=0.55 * inch,
-        topMargin=0.48 * inch,
-        bottomMargin=0.58 * inch,
+        leftMargin=0.43 * inch,
+        rightMargin=0.43 * inch,
+        topMargin=0.42 * inch,
+        bottomMargin=0.85 * inch,
         title=f"Athlete Workload Report - {report['athlete_name']}",
         author="GPS Workload Intelligence - Synthetic Prototype",
     )
@@ -289,50 +654,19 @@ def render_report_pdf(report: dict) -> bytes:
 
     story.append(Paragraph("ATHLETE WORKLOAD REPORT", styles["title"]))
     story.append(Paragraph(
-        f"{athlete_name} &nbsp;|&nbsp; {escape(str(report['position']))} "
-        f"&nbsp;|&nbsp; {escape(str(report['club']))} &nbsp;|&nbsp; "
-        f"ID: {escape(str(report['athlete_id']))}",
-        styles["subtitle"],
+        f"<font name='{FONT_NAMES['bold']}'>{athlete_name}</font> "
+        f"| {escape(str(report['position']))} | {escape(str(report['club']))} "
+        f"| ID: {escape(str(report['athlete_id']))}",
+        styles["athlete"],
     ))
     story.append(Paragraph(
         f"Reporting period: {report['period_start']:%d %b %Y} to {report['period_end']:%d %b %Y}",
-        styles["subtitle"],
+        styles["period"],
     ))
-    story.append(Spacer(1, 7))
-
-    disclaimer = Table([[
-        Paragraph(
-            "<b>SYNTHETIC DEMO DATA.</b> Fictional athlete, fixture and GPS information. "
-            "Independent portfolio prototype; not an official GameOn Collective product "
-            "or a real-athlete assessment.",
-            styles["callout"],
-        )
-    ]], colWidths=[doc.width])
-    disclaimer.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FFF4DB")),
-        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#F2D18B")),
-        ("LEFTPADDING", (0, 0), (-1, -1), 9),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 9),
-        ("TOPPADDING", (0, 0), (-1, -1), 7),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-    ]))
-    story.append(disclaimer)
-
-    story.append(Paragraph("Performance overview", styles["section"]))
+    story.append(HRFlowable(
+        width="100%", thickness=1.5, color=ACCENT, spaceBefore=3, spaceAfter=8,
+    ))
     eligible_count = len(report["sessions"])
-    recorded_count = len(report["all_sessions"])
-    if latest is not None:
-        minutes = f"{int(latest['minutes_played'])} min"
-        if bool(latest["minutes_estimated"]):
-            minutes = "~" + minutes
-        overview = (
-            f"The latest analysis-eligible session was on {latest['match_date']:%d %b %Y} "
-            f"against {escape(str(latest['opponent']))} ({minutes}). "
-            f"{eligible_count} of {recorded_count} recorded sessions passed the analysis-eligibility screen."
-        )
-    else:
-        overview = f"No analysis-eligible sessions were available among {recorded_count} recorded sessions."
-    story.append(Paragraph(overview, styles["body"]))
 
     key_columns = [
         "total_distance_km", "distance_per_min", "hsr_distance_m",
@@ -344,99 +678,92 @@ def render_report_pdf(report: dict) -> bytes:
         kpi_row = []
         for column in key_columns[start:start + 3]:
             metric = stats.loc[column]
-            kpi_row.append(Paragraph(
-                f"<font color='#64748B'>{escape(str(metric['metric']))}</font><br/>"
-                f"<b>{escape(format_metric(column, metric['value']))}</b><br/>"
-                f"<font size='7' color='#64748B'>{int(metric['n_valid'])} valid sessions</font>",
-                styles["body"],
+            count_label = _kpi_count_note(column, metric["n_valid"], eligible_count)
+            kpi_row.append(KpiCard(
+                str(metric["metric"]),
+                format_metric(column, metric["value"]),
+                count_label,
+                doc.width / 3,
             ))
         kpi_data.append(kpi_row)
-    kpi_table = Table(kpi_data, colWidths=[doc.width / 3] * 3)
-    kpi_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), PALE),
-        ("BOX", (0, 0), (-1, -1), 0.5, GRID),
-        ("INNERGRID", (0, 0), (-1, -1), 0.5, GRID),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-    ]))
-    story.append(kpi_table)
-
-    story.append(Paragraph("Automated observations", styles["section"]))
-    comparison_count = 0
-    for observation in report.get("narrative", []):
-        text_value = str(observation["text"])
-        if "from the previous valid session" in text_value or "from the historical mean" in text_value:
-            if comparison_count >= 3:
-                continue
-            comparison_count += 1
-        label = escape(str(observation["section"]))
-        text = escape(text_value)
-        story.append(Paragraph(f"<b>{label}:</b> {text}", styles["body"]))
-
-    if not report["latest_baseline"].empty:
-        story.append(Paragraph("Latest session: selected historical comparisons", styles["section"]))
-        story.append(_table(
-            _baseline_rows(report),
-            [74, 56, 56, 64, 64, 61, 43],
-            font_size=6.5,
-        ))
-
-    story.append(PageBreak())
-    story.append(Paragraph("Session trends", styles["title"]))
-    story.append(Paragraph(
-        "The comparison table on the previous page covers all available metrics. Historical statistics "
-        "exclude the evaluated session; baseline n counts valid prior sessions for each metric.",
-        styles["small"],
-    ))
-    story.append(Paragraph(
-        "Eligible sessions only. Lines break at missing measurements; no missing value is treated as zero. "
-        "Historical-average lines appear only when at least "
-        f"{m.MIN_SESSIONS_FOR_REFERENCE_BAND} valid observations are available.",
-        styles["body"],
-    ))
-    story.append(Spacer(1, 5))
-    primary_charts = [
-        "total_distance_km", "hsr_distance_m", "sprint_count", "player_load_au",
-    ]
-    story.append(_chart_grid(report["sessions"], primary_charts, doc.width))
-
-    story.append(PageBreak())
-    story.append(Paragraph("Additional individual trends", styles["title"]))
-    story.append(_chart_grid(
-        report["sessions"],
-        ["distance_per_min", "accel_count", "decel_count"],
-        doc.width,
-    ))
-
-    story.append(PageBreak())
-    story.append(Paragraph("Combined metrics and data context", styles["title"]))
-    story.append(Paragraph("Combined metrics", styles["section"]))
-    story.append(_table(
-        _metric_rows(report),
-        [112, 90, 75, doc.width - 277],
-        font_size=6.8,
-    ))
-
-    quality = report["quality"]
-    story.append(Paragraph("Data quality and limitations", styles["section"]))
-    quality_summary = (
-        f"{quality['usable_sessions']} eligible of {quality['total_sessions']} sessions; "
-        f"{quality['excluded_sessions']} excluded; "
-        f"{quality['missing_measurements']} missing and {quality['invalid_measurements']} invalid "
-        "measurement issue records; "
-        f"{quality['approximate_minutes']} approximate-minute records."
+    kpi_table = Table(
+        kpi_data,
+        colWidths=[doc.width / 3] * 3,
+        rowHeights=[70] * len(kpi_data),
     )
-    story.append(Paragraph(escape(quality_summary), styles["body"]))
-    story.append(Paragraph(
-        "These descriptive statistics are specific to this synthetic sample. GPS values depend on device "
-        "configuration, sampling and processing; missing observations and small samples limit interpretation. "
-        "The report does not infer tactical effectiveness, medical status, fatigue, or injury risk and should "
-        "not be used for selection, medical, or training decisions.",
-        styles["small"],
-    ))
+    kpi_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    latest_date = latest["match_date"].strftime("%d %b %Y") if latest is not None else "not available"
+    story.append(KeepTogether([
+        kpi_table,
+        Paragraph(
+            f"Based on {eligible_count} eligible sessions ({latest_date} latest).",
+            styles["notes"],
+        ),
+    ]))
+
+    observation_block = [
+        Paragraph("Automated observations", styles["section"]),
+        _observation_table(report, doc.width),
+        Paragraph(CHANGE_LEGEND, styles["small"]),
+        *[
+            NoWrapText(line, FONT_NAMES["regular"], 11, color=INK)
+            for line in _observation_note_lines(report)
+        ],
+    ]
+    story.append(KeepTogether(observation_block))
+
+    story.append(PageBreak())
+    if not report["latest_baseline"].empty:
+        baseline_block = [
+            Paragraph("Latest session vs historical baseline", styles["title"]),
+            _table(
+                _baseline_rows(report),
+                doc.width,
+            ),
+            Paragraph(
+                "Historical baseline excludes the evaluated session. n is the valid prior-session count per metric.",
+                styles["caption"],
+            ),
+        ]
+        story.append(KeepTogether(baseline_block))
+
+    story.append(Spacer(1, 9))
+    trend_heading = Paragraph("Individual session trends", styles["section"])
+    chart_rows = _chart_grid_rows(
+        report["sessions"],
+        [
+            "total_distance_km", "distance_per_min", "hsr_distance_m",
+            "sprint_count", "player_load_au", "accel_count", "decel_count",
+        ],
+        doc.width,
+    )
+    if chart_rows:
+        story.append(KeepTogether([
+            trend_heading,
+            Paragraph(
+                "Eligible sessions only; missing values remain gaps. Dotted reference: historical mean "
+                f"(at least {m.MIN_SESSIONS_FOR_REFERENCE_BAND} valid observations).",
+                styles["caption"],
+            ),
+            chart_rows[0],
+        ]))
+        story.extend(KeepTogether([row]) for row in chart_rows[1:])
+
+    footer = [
+        Paragraph("Data quality and limitations", styles["section"]),
+        Paragraph(
+            "GPS values are subject to missing-data, device-configuration, and small-sample limitations.<br/>"
+            "<b>Synthetic demo data; not for selection, medical, or training decisions.</b>",
+            styles["small"],
+        ),
+    ]
+    story.append(KeepTogether(footer))
 
     doc.build(story, onFirstPage=_page_chrome, onLaterPages=_page_chrome)
     return buffer.getvalue()

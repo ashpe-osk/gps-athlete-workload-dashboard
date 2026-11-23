@@ -1,7 +1,10 @@
 """Shared display formatting for metrics and report outputs."""
+import re
+
 import pandas as pd
 
 from . import metrics as m
+from .theme import CHANGE_THRESHOLDS
 
 
 DECIMAL_PLACES = {
@@ -40,6 +43,23 @@ def format_percent(value, signed: bool = True) -> str | None:
         return None
     sign = "+" if signed else ""
     return f"{float(value):{sign}.1f}%"
+
+
+def classify_change(value) -> tuple[str, bool]:
+    """Return the semantic color token and bold state for a percentage change."""
+    if isinstance(value, str):
+        match = re.search(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?=%)", value)
+        if match is None:
+            return "change_neutral", False
+        value = float(match.group())
+    elif pd.isna(value):
+        return "change_neutral", False
+
+    magnitude = abs(float(value))
+    if magnitude < CHANGE_THRESHOLDS["neutral_below_pct"]:
+        return "change_neutral", False
+    color_token = "change_increase" if value > 0 else "change_decrease"
+    return color_token, magnitude > CHANGE_THRESHOLDS["bold_above_pct"]
 
 
 def format_minutes(value, estimated: bool = False) -> str:

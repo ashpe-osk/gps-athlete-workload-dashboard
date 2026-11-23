@@ -28,6 +28,10 @@ def test_app_starts_with_synthetic_banner():
         button.label == "Download report (.pdf)"
         for button in at.get("download_button")
     )
+    assert any(
+        "not for selection, medical, or training decisions" in caption.value.lower()
+        for caption in at.caption
+    )
 
 
 def test_app_reloads_chart_module_when_a_builder_is_missing(monkeypatch):
@@ -45,10 +49,10 @@ def test_app_reloads_metrics_module_when_a_helper_is_missing(monkeypatch):
 
 
 def test_app_reloads_report_module_when_a_builder_is_missing(monkeypatch):
-    monkeypatch.delattr(report, "build_narrative")
+    monkeypatch.delattr(report, "build_observations_table")
     at = run_app()
     assert not at.exception
-    assert callable(report.build_narrative)
+    assert callable(report.build_observations_table)
 
 
 def test_app_supports_light_and_dark_themes():

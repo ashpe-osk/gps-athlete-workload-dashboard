@@ -19,8 +19,8 @@ if root_path in sys.path:
 sys.path.insert(0, root_path)
 
 from src import charts, metrics as m, quality, theme as theme_module  # noqa: E402
+from src import formatting as formatting_module  # noqa: E402
 from src.cleaning import clean_pipeline  # noqa: E402
-from src.formatting import format_metric, format_percent  # noqa: E402
 from src import report as report_builder  # noqa: E402
 from src import pdf_report as pdf_report_builder  # noqa: E402
 
@@ -28,6 +28,10 @@ from src import pdf_report as pdf_report_builder  # noqa: E402
 theme_module = importlib.reload(theme_module)
 charts = importlib.reload(charts)
 m = importlib.reload(m)
+formatting_module = importlib.reload(formatting_module)
+classify_change = formatting_module.classify_change
+format_metric = formatting_module.format_metric
+format_percent = formatting_module.format_percent
 report_builder = importlib.reload(report_builder)
 pdf_report_builder = importlib.reload(pdf_report_builder)
 app_css = theme_module.app_css
@@ -77,7 +81,7 @@ st.markdown(
 )
 st.warning(
     "**SYNTHETIC DEMO DATA.** Club names are public league context only. All athletes, fixtures, dates and "
-    "GPS values are fictional. Independent portfolio prototype, not an official GameOn Collective product."
+    "GPS values are fictional."
 )
 
 # ------------------------------------------------------------------ sidebar
@@ -431,27 +435,108 @@ with tabs[6]:
     st.markdown(f"**{report_data['athlete_name']} · {report_data['position']} · {report_data['club']}**")
     st.caption(
         f"{report_data['period_start']:%d %b %Y} – {report_data['period_end']:%d %b %Y} · "
-        f"{len(report_data['sessions'])} analysis-eligible sessions"
+        "reporting period"
     )
-    st.info("This downloadable report is a synthetic-data demonstration, not an assessment of a real athlete.")
-    st.markdown("#### Automated observations")
-    for observation in report_builder.build_narrative(report_data):
-        st.markdown(f"- **{observation['section']}:** {observation['text']}")
-    st.markdown("#### Combined metrics")
     report_metrics = report_data["metrics"]
+    report_stats = report_metrics.set_index("column")
+    report_kpis = [
+        "total_distance_km", "distance_per_min", "hsr_distance_m",
+        "sprint_count", "player_load_au", "top_speed_kmh",
+    ]
+    for row_start in (0, 3):
+        kpi_columns = st.columns(3)
+        for index, column in enumerate(report_kpis[row_start:row_start + 3]):
+            stat = report_stats.loc[column]
+            kpi_columns[index].metric(
+                str(stat["metric"]),
+                fmt(column, stat["value"]),
+            )
+            if int(stat["n_valid"]) != len(report_data["sessions"]):
+                kpi_columns[index].caption(
+                    f"{int(stat['n_valid'])} of {len(report_data['sessions'])} sessions"
+                )
+    latest = (
+        report_data["sessions"].iloc[-1]["match_date"].strftime("%d %b %Y")
+        if not report_data["sessions"].empty
+        else "not available"
+    )
+    st.caption(f"Based on {len(report_data['sessions'])} eligible sessions ({latest} latest).")
+
+    st.markdown("#### Automated observations")
+    observations = report_data["observations"][[
+        "Metric", "Latest", "vs previous session", "vs historical mean", "Flag",
+    ]].copy()
+    report_colors = theme_module.colors_for(display_theme)
+
+    def observation_color(value):
+        color_token, bold = classify_change(value)
+        weight = "700" if bold else "400"
+        return f"color: {report_colors[color_token]}; font-weight: {weight};"
+
+    observation_style = (
+        observations.style
+        .map(observation_color, subset=["vs previous session", "vs historical mean"])
+        .set_properties(
+            subset=["Latest", "vs previous session", "vs historical mean"],
+            **{"text-align": "right", "font-variant-numeric": "tabular-nums"},
+        )
+        .set_table_styles([
+            {
+                "selector": "thead th",
+                "props": [
+                    ("text-align", "left"),
+                    ("border-bottom", "2px solid var(--control-border)"),
+                ],
+            },
+            {
+                "selector": "tbody td",
+                "props": [
+                    ("border-bottom", "1px solid var(--border)"),
+                    ("font-variant-numeric", "tabular-nums"),
+                ],
+            },
+            {
+                "selector": "tbody tr:nth-child(even)",
+                "props": [("background-color", "var(--surface-tint)")],
+            },
+        ])
+    )
     st.dataframe(
-        pd.DataFrame({
-            "Metric": report_metrics["metric"],
-            "Value": [format_metric(c, v) for c, v in zip(report_metrics["column"], report_metrics["value"])],
-            "Aggregation": report_metrics["method"],
-            "Valid sessions": [
-                f"{valid} of {total}"
-                for valid, total in zip(report_metrics["n_valid"], report_metrics["n_sessions"])
-            ],
-        }),
+        observation_style,
         hide_index=True,
         width="stretch",
+        column_config={
+            "Metric": st.column_config.TextColumn(width="medium"),
+            "Latest": st.column_config.TextColumn(width="small"),
+            "vs previous session": st.column_config.TextColumn(width="small"),
+            "vs historical mean": st.column_config.TextColumn(width="small"),
+            "Flag": st.column_config.TextColumn(width="medium"),
+        },
     )
+    st.caption(theme_module.CHANGE_LEGEND)
+    st.caption(f"Notes: {report_data['notes']}")
+
+    st.markdown("#### Latest session vs historical baseline")
+    baseline = report_data["latest_baseline"]
+    baseline_display = pd.DataFrame({
+        "Metric": [m.METRIC_INFO[column][0] for column in baseline["column"]],
+        "Latest": [fmt(column, value) for column, value in zip(baseline["column"], baseline["latest"])],
+        "Previous valid": [fmt(column, value) for column, value in zip(baseline["column"], baseline["previous"])],
+        "Historical mean": [fmt(column, value) for column, value in zip(baseline["column"], baseline["historical_mean"])],
+        "Historical median": [fmt(column, value) for column, value in zip(baseline["column"], baseline["historical_median"])],
+        "Change vs mean": [fmt_pct(value) or "—" for value in baseline["pct_baseline"]],
+        "Baseline n": baseline["baseline_n"],
+    })
+    baseline_style = baseline_display.style.map(
+        observation_color,
+        subset=["Change vs mean"],
+    ).set_properties(
+        subset=["Change vs mean"],
+        **{"text-align": "right", "font-variant-numeric": "tabular-nums"},
+    )
+    st.dataframe(baseline_style, hide_index=True, width="stretch")
+    st.caption("Historical baseline excludes the evaluated session. n is the valid prior-session count per metric.")
+
     report_pdf = pdf_report_builder.render_report_pdf(report_data)
     pdf_button, markdown_button, csv_button = st.columns(3)
     pdf_button.download_button(
@@ -477,8 +562,10 @@ with tabs[6]:
         mime="text/csv",
         use_container_width=True,
     )
-    with st.expander("Preview full report"):
-        st.markdown(report_markdown)
+    st.caption(
+        "GPS values are subject to device-configuration and small-sample limitations. "
+        "Synthetic demo data; not for selection, medical, or training decisions."
+    )
 
 # ------------------------------------------------------------------ H. Data Quality
 with tabs[7]:

@@ -1,9 +1,15 @@
-# GPS Athlete Workload Dashboard
+<p align="center">
+  <img src="docs/banner-wide.png" alt="Athlete workload report preview showing KPI cards and automated observations" width="100%">
+</p>
 
-An interactive football workload analytics prototype built with Streamlit,
-Plotly, pandas, and synthetic GPS match-session data. It includes coordinated
-light and dark themes, workload trends, athlete comparisons, downloadable
-reports, and a visible data-quality audit trail.
+An independent portfolio prototype that turns synthetic GPS session data into
+a clean, readable, coach-ready PDF workload report.
+
+<p align="center">
+  <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License">
+  <img src="https://img.shields.io/badge/stack-Python%20%7C%20Streamlit%20%7C%20Plotly-informational" alt="Python, Streamlit, and Plotly">
+  <img src="https://img.shields.io/badge/data-synthetic-orange" alt="Synthetic data">
+</p>
 
 ## Project Objectives
 
@@ -23,11 +29,15 @@ selected athletes, not league rankings or performance targets. Use the
 Appearance selector in the sidebar to switch the full dashboard and charts
 between light and dark themes.
 
-The Athlete workload report can be downloaded as a professionally formatted
-PDF with individual session-trend charts, historical comparisons, combined
-metrics, and data-quality limitations. Markdown and CSV downloads remain
-available. PDF charts use only the selected athlete's analysis-eligible
-sessions; missing observations remain gaps.
+The Athlete workload report can be downloaded as a concise, professionally
+formatted PDF with compact observations, historical comparisons, and
+individual session-trend charts. PDF typography uses embedded Inter with
+tabular numerals for consistent rendering and aligned values. The bundled
+Inter fonts use Inter's tabular numeral alternates as defaults; font files and
+their SIL Open Font License are included under `assets/fonts/`. Markdown and
+CSV downloads remain available.
+PDF charts use only the selected athlete's analysis-eligible sessions;
+missing observations remain gaps.
 
 Performance Trends and Workload & Consistency share an athlete-preserving
 date-range filter. Trend charts retain missing-value gaps and can show
@@ -79,6 +89,8 @@ gps-athlete-workload-dashboard/
 ├── requirements.txt
 ├── template.sh
 ├── app/
+├── assets/
+│   └── fonts/
 ├── data/
 │   ├── raw/
 │   └── processed/
