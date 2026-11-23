@@ -64,6 +64,20 @@ def test_dataframe_style_uses_selected_theme_colors(theme):
     assert colors["text"] in html
 
 
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_app_css_styles_warning_and_metric_delta_for_selected_theme(theme):
+    css = theme_module.app_css(theme)
+    colors = colors_for(theme)
+
+    assert '[data-testid="stAlertContentWarning"]' in css
+    assert '[data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"])' in css
+    assert '[data-testid="stMetricDelta"]' in css
+    assert f'--warning-bg: {colors["warning_bg"]}' in css
+    assert f'--warning-text: {colors["warning_text"]}' in css
+    assert f'--metric-delta-bg: {colors["metric_delta_bg"]}' in css
+    assert f'--metric-delta-text: {colors["metric_delta_text"]}' in css
+
+
 def test_quality_summary_and_register_retain_audit_context(cleaned_data):
     sessions, issues = cleaned_data
     summary = quality.quality_summary(sessions, issues)

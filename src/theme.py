@@ -18,6 +18,8 @@ class ThemeColors(TypedDict):
     header: str
     warning_bg: str
     warning_text: str
+    metric_delta_bg: str
+    metric_delta_text: str
     kicker: str
     chart_accent: str
     rolling: str
@@ -43,6 +45,8 @@ THEMES = {
         "header": "rgba(244, 246, 248, 0.94)",
         "warning_bg": "#FFF4DB",
         "warning_text": "#593A00",
+        "metric_delta_bg": "#E2E8F0",
+        "metric_delta_text": "#334155",
         "kicker": "#B45309",
         "chart_accent": "#C65D0A",
         "rolling": "#1D4ED8",
@@ -67,6 +71,8 @@ THEMES = {
         "header": "rgba(16, 24, 32, 0.94)",
         "warning_bg": "#3A2D1A",
         "warning_text": "#FDE7B2",
+        "metric_delta_bg": "#344451",
+        "metric_delta_text": "#F1F5F9",
         "kicker": "#FDBA74",
         "chart_accent": "#FF9F43",
         "rolling": "#93C5FD",
@@ -148,6 +154,8 @@ def app_css(theme: str) -> str:
       --control-border: {colors["control_border"]};
       --warning-bg: {colors["warning_bg"]};
       --warning-text: {colors["warning_text"]};
+      --metric-delta-bg: {colors["metric_delta_bg"]};
+      --metric-delta-text: {colors["metric_delta_text"]};
       --kicker: {colors["kicker"]};
       --download-primary-text: {colors["download_primary_text"]};
     }}
@@ -329,11 +337,30 @@ def app_css(theme: str) -> str:
     [data-baseweb="tab"] {{ border-radius: 8px 8px 0 0; }}
     [aria-selected="true"] {{ border-bottom-color: var(--brand-orange) !important; }}
     div[data-testid="stAlert"] {{ border-radius: 10px; }}
-    [data-testid="stAlert"][kind="warning"],
-    [data-testid="stAlert"][kind="warning"] p {{
-      background: var(--warning-bg);
-      color: var(--warning-text);
-      border-color: var(--brand-orange);
+    [data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]) {{
+      background: var(--warning-bg) !important;
+      border: 1px solid var(--brand-orange) !important;
+      border-radius: 10px;
+    }}
+    [data-testid="stAlertContentWarning"] {{
+      background: transparent !important;
+      color: var(--warning-text) !important;
+    }}
+    [data-testid="stAlertContentWarning"] [data-testid="stMarkdownContainer"],
+    [data-testid="stAlertContentWarning"] p,
+    [data-testid="stAlertContentWarning"] strong,
+    [data-testid="stAlertContentWarning"] svg {{
+      color: var(--warning-text) !important;
+    }}
+    [data-testid="stMetricDelta"] {{
+      background: var(--metric-delta-bg) !important;
+      border-radius: 999px;
+      color: var(--metric-delta-text) !important;
+    }}
+    [data-testid="stMetricDelta"] [data-testid="stMarkdownContainer"],
+    [data-testid="stMetricDelta"] p,
+    [data-testid="stMetricDelta"] svg {{
+      color: var(--metric-delta-text) !important;
     }}
     div[data-baseweb="select"] > div, [data-baseweb="input"] > div {{
       background: var(--surface);
