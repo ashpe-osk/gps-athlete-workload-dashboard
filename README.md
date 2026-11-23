@@ -2,46 +2,59 @@
   <img src="docs/banner-wide.png" alt="Athlete workload report preview showing KPI cards and automated observations" width="100%">
 </p>
 
-An independent portfolio project that turns fictional GPS match data into a
-dashboard and easy-to-read athlete workload reports.
+<p align="center">
+  <b>Turn GPS session data into clear, coach-ready athlete workload reports.</b><br>
+  An independent portfolio prototype built with synthetic data.
+</p>
 
 <p align="center">
+  <a href="https://gps-athlete-dashboard.streamlit.app/"><img src="https://img.shields.io/badge/Live%20demo-Open%20dashboard-FF4B4B?logo=streamlit&logoColor=white" alt="Live demo"></a>
   <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License">
   <img src="https://img.shields.io/badge/stack-Python%20%7C%20Streamlit%20%7C%20Plotly-informational" alt="Python, Streamlit, and Plotly">
   <img src="https://img.shields.io/badge/data-synthetic-orange" alt="Synthetic data">
 </p>
 
-## Try the dashboard
+## Overview
 
-[Open the live dashboard](https://gps-athlete-dashboard.streamlit.app/)
+Sports teams collect large amounts of GPS data, but raw numbers are hard to act on. This project compares each athlete's latest session with their own history and presents the result as an interactive dashboard and a printable PDF report.
 
-## What it does
+**[Open the live dashboard](https://gps-athlete-dashboard.streamlit.app/)**
 
-- Shows athlete match workload, including distance, sprints, and speed.
-- Compares recent sessions with each athlete's past sessions.
-- Tracks trends and highlights missing or unusual data.
-- Creates downloadable PDF reports.
-- Lets you switch between light and dark themes.
+## Features
 
-## Run it on your computer
+- **Workload metrics:** total distance, distance per minute, high-speed running, sprints, accelerations, decelerations, Player Load and top speed.
+- **Session vs history:** the latest session is compared with the previous session and the athlete's historical mean.
+- **Automated observations:** changes are shown in one compact table, with variation flags for metrics that fluctuate a lot.
+- **Trend charts:** one chart per metric, with a historical-mean reference line.
+- **Data-quality screening:** sessions with missing or invalid values are flagged and excluded from the analysis.
+- **PDF reports:** a print-ready report for each athlete, one click away.
 
-1. Install Python.
-2. Download or clone this project and open its folder in a terminal.
-3. Install the required packages:
+## Quick start
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+Requires Python 3.10 or newer.
 
-4. Start the dashboard:
+```bash
+git clone https://github.com/<your-username>/gps-athlete-workload-dashboard.git
+cd gps-athlete-workload-dashboard
+pip install -r requirements.txt
+streamlit run app/app.py
+```
 
-   ```bash
-   streamlit run app/app.py
-   ```
+The dashboard opens at `http://localhost:8501`.
+
+## Project structure
+
+```text
+app/    Streamlit dashboard
+src/    Data generation, cleaning, metrics and configuration
+data/   Synthetic sample data
+docs/   Banner and documentation assets
+```
 
 ## About the data
 
-The athletes, match sessions, and GPS measurements are fictional sample data.
-This project is an independent portfolio prototype, not an official GameOn
-product. It is for demonstration only, not for athlete selection, medical, or
-training decisions.
+All athletes, sessions and GPS measurements are fictional. This is an independent portfolio prototype, not an official product of any organisation and not an assessment of real athletes. The reports describe the sample data only and must not be used for athlete selection, medical or training decisions.
+
+## License
+
+Released under the MIT License.
