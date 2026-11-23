@@ -13,7 +13,7 @@ Missing values are skipped, and the number of valid sessions is always reported.
 import numpy as np
 import pandas as pd
 
-# column -> (label, kind, unit)
+# Column: (display label, aggregation, unit).
 METRIC_INFO = {
     "minutes_played":    ("Minutes played",        "total", "min"),
     "total_distance_km": ("Total distance",        "total", "km"),
@@ -44,9 +44,6 @@ MIN_MINUTES_FOR_RATES = 45        # per-90 values only for sessions at least thi
 MIN_TOTAL_MINUTES_FOR_COMPARISON = 180
 
 
-# --------------------------------------------------------------------------
-# Helpers
-# --------------------------------------------------------------------------
 def usable_sessions(df: pd.DataFrame) -> pd.DataFrame:
     """Sessions that passed the data-quality screen, oldest first."""
     return df[df["use_in_analysis"]].sort_values(["athlete_id", "match_date"]).reset_index(drop=True)
@@ -89,9 +86,6 @@ def pooled_rate(numerator: pd.Series, minutes: pd.Series, per: float = 1.0) -> f
     return float(numerator[both].astype(float).sum() / total_minutes * per)
 
 
-# --------------------------------------------------------------------------
-# Trends
-# --------------------------------------------------------------------------
 def pct_change_vs_previous(series: pd.Series) -> pd.Series:
     """% change vs the previous session that HAS a value for this metric."""
     valid = series.dropna().astype(float)
@@ -205,9 +199,6 @@ def match_vs_history(df: pd.DataFrame, athlete_id: str, match_id: str) -> pd.Dat
     return pd.DataFrame([compare_with_own_history(athlete_df, c, match_id) for c in columns])
 
 
-# --------------------------------------------------------------------------
-# Combined statistics (the GameOn-style summary, with n shown)
-# --------------------------------------------------------------------------
 def combined_stats(athlete_df: pd.DataFrame) -> pd.DataFrame:
     """Combined statistics for one athlete's usable sessions, with the aggregation method stated."""
     n_sessions = len(athlete_df)
@@ -234,9 +225,6 @@ def mean_of_match_rates(athlete_df: pd.DataFrame) -> float:
     return float(athlete_df["distance_per_min"].mean()) if athlete_df["distance_per_min"].notna().any() else np.nan
 
 
-# --------------------------------------------------------------------------
-# Consistency
-# --------------------------------------------------------------------------
 def consistency_summary(series: pd.Series) -> dict:
     """Mean, standard deviation and coefficient of variation (CV = sd / mean x 100)."""
     valid = series.dropna().astype(float)
@@ -263,9 +251,6 @@ def consistency_table(athlete_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# --------------------------------------------------------------------------
-# Athlete comparison
-# --------------------------------------------------------------------------
 def comparison_table(df: pd.DataFrame, athlete_ids: list):
     """Per-90 and pooled-rate comparison plus a list of warnings about comparability."""
     rows, warnings = [], []

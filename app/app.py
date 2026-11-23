@@ -11,7 +11,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-# Streamlit adds the app directory to sys.path; add the repository root for package imports.
+# Add the repository root so app imports work from any launch directory.
 ROOT = Path(__file__).resolve().parents[1]
 root_path = str(ROOT)
 if root_path in sys.path:
@@ -24,7 +24,7 @@ from src.cleaning import clean_pipeline  # noqa: E402
 from src import report as report_builder  # noqa: E402
 from src import pdf_report as pdf_report_builder  # noqa: E402
 
-# Streamlit keeps imported modules in sys.modules across reruns.
+# Reload modules so Streamlit reruns use current source.
 theme_module = importlib.reload(theme_module)
 charts = importlib.reload(charts)
 m = importlib.reload(m)
@@ -67,7 +67,14 @@ display_theme = st.sidebar.radio(
     key="display_theme",
 )
 
-# ------------------------------------------------------------------ header
+
+def show_dataframe(data, **kwargs):
+    if isinstance(data, pd.DataFrame):
+        data = theme_module.style_dataframe(data, display_theme)
+    st.dataframe(data, **kwargs)
+
+
+# Header
 st.markdown(
     f"""
     <style>{app_css(display_theme)}</style>
@@ -84,7 +91,7 @@ st.warning(
     "GPS values are fictional."
 )
 
-# ------------------------------------------------------------------ sidebar
+# Sidebar
 athletes = clean_df[["athlete_id", "athlete_name", "position", "club"]].drop_duplicates().sort_values("athlete_id")
 labels = {r.athlete_id: f"{r.athlete_name} ({r.position})" for r in athletes.itertuples()}
 with st.sidebar.container(border=True, key="player-selection-card"):
@@ -122,7 +129,7 @@ athlete_range = m.filter_sessions_by_date(athlete_use, range_start, range_end)
 tabs = st.tabs(["Overview", "Athlete Profile", "Match Analysis", "Performance Trends",
                 "Workload & Consistency", "Comparison", "Report", "Data Quality"])
 
-# ------------------------------------------------------------------ A. Overview
+# Overview
 with tabs[0]:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Athletes", clean_df["athlete_id"].nunique())
@@ -145,14 +152,14 @@ with tabs[0]:
 
     st.subheader("Latest session for every athlete")
     latest_rows = m.usable_sessions(clean_df).groupby("athlete_id").tail(1)
-    st.dataframe(pd.DataFrame({
+    show_dataframe(pd.DataFrame({
         "Athlete": latest_rows["athlete_name"], "Position": latest_rows["position"],
         "Date": latest_rows["match_date"].dt.strftime("%d %b %Y"), "Opponent": latest_rows["opponent"],
         "Minutes": latest_rows["minutes_played"], "Distance (km)": latest_rows["total_distance_km"],
         "Sprints": latest_rows["sprint_count"], "Player Load (AU)": latest_rows["player_load_au"],
     }), hide_index=True, width="stretch")
 
-# ------------------------------------------------------------------ B. Athlete Profile
+# Athlete profile
 with tabs[1]:
     st.subheader(athlete_info["athlete_name"])
     p1, p2, p3 = st.columns(3)
@@ -162,7 +169,7 @@ with tabs[1]:
 
     st.markdown("#### Combined statistics")
     stats = m.combined_stats(athlete_use)
-    st.dataframe(pd.DataFrame({
+    show_dataframe(pd.DataFrame({
         "Metric": stats["metric"],
         "Value": [fmt(c, v) for c, v in zip(stats["column"], stats["value"])],
         "How it is combined": stats["method"],
@@ -179,7 +186,7 @@ with tabs[1]:
     st.markdown("#### Match history")
     minutes_text = [f"~{int(v)}" if e else f"{int(v)}"
                     for v, e in zip(athlete_all["minutes_played"], athlete_all["minutes_estimated"])]
-    st.dataframe(pd.DataFrame({
+    show_dataframe(pd.DataFrame({
         "Date": athlete_all["match_date"].dt.strftime("%d %b %Y"), "Opponent": athlete_all["opponent"],
         "H/A": athlete_all["home_away"], "Minutes": minutes_text,
         "Distance (km)": athlete_all["total_distance_km"], "m/min": athlete_all["distance_per_min"],
@@ -187,7 +194,7 @@ with tabs[1]:
         "Player Load": athlete_all["player_load_au"], "Data status": athlete_all["quality_status"],
     }), hide_index=True, width="stretch")
 
-# ------------------------------------------------------------------ C. Match Analysis
+# Match analysis
 with tabs[2]:
     options = athlete_all.sort_values("match_date", ascending=False)
     names = {r.match_id: f"{r.match_date:%d %b %Y} vs {r.opponent} ({r.home_away})"
@@ -221,7 +228,7 @@ with tabs[2]:
     if history is not None:
         with st.expander("Adjusted for minutes played (per 90)"):
             per90 = history[history.index.str.endswith("_per90")].reset_index()
-            st.dataframe(pd.DataFrame({
+            show_dataframe(pd.DataFrame({
                 "Metric": [m.METRIC_INFO[c.replace("_per90", "")][0] for c in per90["column"]],
                 "This match (per 90)": per90["current"].round(1),
                 "Own earlier average (per 90)": per90["prior_mean"].round(1),
@@ -245,13 +252,13 @@ with tabs[2]:
                 "vs baseline": [fmt_pct(v) or "—" for v in baseline["pct_baseline"]],
                 "Baseline sessions": baseline["baseline_n"],
             })
-            st.dataframe(baseline_display, hide_index=True, width="stretch")
+            show_dataframe(baseline_display, hide_index=True, width="stretch")
             st.caption(
                 "Baseline statistics use earlier analysis-eligible sessions only and exclude the session being evaluated. "
                 "Missing values remain missing; each baseline row reports the number of valid contributing sessions."
             )
 
-# ------------------------------------------------------------------ D. Performance Trends
+# Performance trends
 with tabs[3]:
     t1, t2, t3 = st.columns(3)
     per90_on = t1.checkbox("Adjust volume metrics to per 90 minutes", value=False,
@@ -299,10 +306,10 @@ with tabs[3]:
         change_table = pd.DataFrame({"Date": athlete_range["match_date"].dt.strftime("%d %b %Y")})
         for column in trend_columns:
             change_table[m.METRIC_INFO[column][0]] = m.pct_change_vs_previous(athlete_range[column]).round(1)
-        st.dataframe(change_table, hide_index=True, width="stretch")
+        show_dataframe(change_table, hide_index=True, width="stretch")
         st.caption("Change vs the previous session that has a value for that metric. Blank = no earlier value.")
 
-# ------------------------------------------------------------------ E. Workload & Consistency
+# Workload and consistency
 with tabs[4]:
     st.subheader("Workload consistency")
     if athlete_range.empty:
@@ -317,7 +324,7 @@ with tabs[4]:
         "mean": "Mean", "sd": "Standard deviation", "cv_pct": "CV (%)",
         "low_confidence": "Low confidence",
     })
-    st.dataframe(
+    show_dataframe(
         consistency_display,
         hide_index=True,
         width="stretch",
@@ -346,7 +353,7 @@ with tabs[4]:
         )
         st.caption("High-speed distance is a subset of total distance. Sessions missing either value are omitted.")
 
-# ------------------------------------------------------------------ F. Comparison
+# Athlete comparison
 with tabs[5]:
     st.subheader("Compare athlete workload")
     st.caption(
@@ -383,7 +390,7 @@ with tabs[5]:
             "HSR (m/90)", "Sprints (/90)", "Accelerations (/90)",
             "Decelerations (/90)", "Player Load (/90)", "Best speed (km/h)",
         ]
-        st.dataframe(
+        show_dataframe(
             comparison_display[display_columns],
             hide_index=True,
             width="stretch",
@@ -427,7 +434,7 @@ with tabs[5]:
         )
         st.caption("Boxes show the interquartile range and median; points are individual usable sessions.")
 
-# ------------------------------------------------------------------ G. Report
+# Report
 with tabs[6]:
     st.subheader("Athlete workload report")
     report_data = report_builder.build_report(clean_df, issues_df, selected_id)
@@ -474,7 +481,7 @@ with tabs[6]:
         return f"color: {report_colors[color_token]}; font-weight: {weight};"
 
     observation_style = (
-        observations.style
+        theme_module.style_dataframe(observations, display_theme)
         .map(observation_color, subset=["vs previous session", "vs historical mean"])
         .set_properties(
             subset=["Latest", "vs previous session", "vs historical mean"],
@@ -499,9 +506,9 @@ with tabs[6]:
                 "selector": "tbody tr:nth-child(even)",
                 "props": [("background-color", "var(--surface-tint)")],
             },
-        ])
+        ], overwrite=False)
     )
-    st.dataframe(
+    show_dataframe(
         observation_style,
         hide_index=True,
         width="stretch",
@@ -527,14 +534,16 @@ with tabs[6]:
         "Change vs mean": [fmt_pct(value) or "—" for value in baseline["pct_baseline"]],
         "Baseline n": baseline["baseline_n"],
     })
-    baseline_style = baseline_display.style.map(
+    baseline_style = theme_module.style_dataframe(
+        baseline_display, display_theme,
+    ).map(
         observation_color,
         subset=["Change vs mean"],
     ).set_properties(
         subset=["Change vs mean"],
         **{"text-align": "right", "font-variant-numeric": "tabular-nums"},
     )
-    st.dataframe(baseline_style, hide_index=True, width="stretch")
+    show_dataframe(baseline_style, hide_index=True, width="stretch")
     st.caption("Historical baseline excludes the evaluated session. n is the valid prior-session count per metric.")
 
     report_pdf = pdf_report_builder.render_report_pdf(report_data)
@@ -567,7 +576,7 @@ with tabs[6]:
         "Synthetic demo data; not for selection, medical, or training decisions."
     )
 
-# ------------------------------------------------------------------ H. Data Quality
+# Data quality
 with tabs[7]:
     st.subheader("Data quality & audit trail")
     summary = quality.quality_summary(clean_df, issues_df)
@@ -595,7 +604,7 @@ with tabs[7]:
     if issue_counts.empty:
         st.success("No quality issues were recorded.")
     else:
-        st.dataframe(issue_counts, hide_index=True, width="stretch")
+        show_dataframe(issue_counts, hide_index=True, width="stretch")
         register = quality.issue_register(clean_df, issues_df)
         register_display = register.rename(columns={
             "match_date": "Date", "athlete_name": "Athlete", "position": "Position",
@@ -608,7 +617,7 @@ with tabs[7]:
                 "Detail", "Session status", "Included",
             ] if column in register_display
         ]
-        st.dataframe(
+        show_dataframe(
             register_display[register_columns],
             hide_index=True,
             width="stretch",

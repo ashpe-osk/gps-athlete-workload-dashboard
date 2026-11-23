@@ -54,6 +54,16 @@ def test_change_classification_uses_named_thresholds(value, token, bold):
     assert classify_change(value) == (token, bold)
 
 
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_dataframe_style_uses_selected_theme_colors(theme):
+    styler = theme_module.style_dataframe(pd.DataFrame({"Metric": ["Distance"]}), theme)
+    html = styler.to_html()
+    colors = colors_for(theme)
+
+    assert colors["surface"] in html
+    assert colors["text"] in html
+
+
 def test_quality_summary_and_register_retain_audit_context(cleaned_data):
     sessions, issues = cleaned_data
     summary = quality.quality_summary(sessions, issues)

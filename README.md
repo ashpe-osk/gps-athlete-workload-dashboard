@@ -2,8 +2,8 @@
   <img src="docs/banner-wide.png" alt="Athlete workload report preview showing KPI cards and automated observations" width="100%">
 </p>
 
-An independent portfolio prototype that turns synthetic GPS session data into
-a clean, readable, coach-ready PDF workload report.
+An independent portfolio project that turns fictional GPS match data into a
+dashboard and easy-to-read athlete workload reports.
 
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License">
@@ -11,142 +11,37 @@ a clean, readable, coach-ready PDF workload report.
   <img src="https://img.shields.io/badge/data-synthetic-orange" alt="Synthetic data">
 </p>
 
-## Project Objectives
+## Try the dashboard
 
-- Analyse athlete workload across match sessions.
-- Monitor total distance covered.
-- Analyse high-speed running and sprint distance.
-- Monitor accelerations and decelerations.
-- Compare workload across athletes and sessions.
-- Assess session-to-session consistency and minutes-adjusted distributions.
-- Review issue records and analysis eligibility.
-- Monitor workload trends without presenting them as fatigue or injury predictions.
-- Present findings through an interactive Streamlit dashboard.
+[Open the live dashboard](https://gps-athlete-dashboard.streamlit.app/)
 
-The dashboard includes line, intensity-scatter, stacked-bar, radar, box,
-bubble, and heatmap visualizations. Cohort percentiles are relative to the
-selected athletes, not league rankings or performance targets. Use the
-Appearance selector in the sidebar to switch the full dashboard and charts
-between light and dark themes.
+## What it does
 
-The Athlete workload report can be downloaded as a concise, professionally
-formatted PDF with compact observations, historical comparisons, and
-individual session-trend charts. PDF typography uses embedded Inter with
-tabular numerals for consistent rendering and aligned values. The bundled
-Inter fonts use Inter's tabular numeral alternates as defaults; font files and
-their SIL Open Font License are included under `assets/fonts/`. Markdown and
-CSV downloads remain available.
-PDF charts use only the selected athlete's analysis-eligible sessions;
-missing observations remain gaps.
+- Shows athlete match workload, including distance, sprints, and speed.
+- Compares recent sessions with each athlete's past sessions.
+- Tracks trends and highlights missing or unusual data.
+- Creates downloadable PDF reports.
+- Lets you switch between light and dark themes.
 
-Performance Trends and Workload & Consistency share an athlete-preserving
-date-range filter. Trend charts retain missing-value gaps and can show
-optional point labels, three-session rolling averages, historical averages,
-descriptive mean +/- 1 SD reference bands, and latest-session percentage
-change annotations. Selected match and report views also provide
-athlete-specific historical mean and median comparisons, with the evaluated
-session excluded and valid baseline sample counts shown.
+## Run it on your computer
 
-## Reading the visuals responsibly
+1. Install Python.
+2. Download or clone this project and open its folder in a terminal.
+3. Install the required packages:
 
-The included cleaned sample contains 43 match-athlete sessions from six
-fictional athletes across four positions and 24 fixtures. It is intentionally
-small and includes planted missing, invalid, approximate, duplicate, and
-possible-dropout records. Use the dashboard to demonstrate the product and
-surface data limitations, not to make claims about a league or real players.
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-- Use the minutes-versus-distance-rate scatter to separate playing time from
-  match intensity, with opponent band and approximate minutes available in the
-  hover details.
-- Use the stacked distance chart to distinguish high-speed distance from the
-  rest of total distance, and the per-90 box/point view to compare session
-  distributions rather than only averages.
-- Use the within-athlete heatmap and data-quality schedule map to discuss
-  consistency and measurement coverage. These are descriptive screens, not
-  readiness or sensor-certification scores.
-- Keep cohort radar comparisons explicitly relative to the selected sample;
-  small samples and mixed roles make them unsuitable as rankings.
+4. Start the dashboard:
 
-The data has match sessions only—no training exposures, injuries, wellness
-measures, or tracking coordinates. Avoid injury-risk/ACWR claims, tactical
-movement maps, and correlation charts that can overstate relationships among
-strongly related volume measures.
+   ```bash
+   streamlit run app/app.py
+   ```
 
-## Technology Stack
+## About the data
 
-- Python: Data processing and analysis.
-- Pandas and NumPy: Data manipulation.
-- Plotly: Interactive visualisations.
-- Streamlit: Dashboard development.
-- Pytest: Testing.
-
-## Project Structure
-
-```text
-gps-athlete-workload-dashboard/
-├── .gitignore
-├── README.md
-├── requirements.txt
-├── template.sh
-├── app/
-├── assets/
-│   └── fonts/
-├── data/
-│   ├── raw/
-│   └── processed/
-├── docs/
-│   └── data_dictionary.md
-├── src/
-│   ├── __init__.py
-│   ├── charts.py
-│   ├── cleaning.py
-│   ├── formatting.py
-│   ├── metrics.py
-│   ├── quality.py
-│   └── report.py
-└── tests/
-```
-
-## Getting Started
-
-### 1. Create a virtual environment
-
-```bash
-python -m venv .venv
-```
-
-### 2. Activate it
-
-Git Bash:
-
-```bash
-source .venv/Scripts/activate
-```
-
-### 3. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Generate synthetic sample data (optional)
-
-```bash
-python src/generate_data.py
-```
-
-### 5. Launch the dashboard
-
-```bash
-streamlit run app/app.py
-```
-
-The dashboard tabs cover overview, athlete profile, match analysis, performance
-trends, consistency, comparison, report export, and data quality.
-
-## Data Notice
-
-All athletes, fixtures, dates, and GPS values in the included datasets are
-fictional. Club names are public league context only. This independent
-portfolio prototype is not an official GameOn product and is not for real
-athlete assessment or training decisions.
+The athletes, match sessions, and GPS measurements are fictional sample data.
+This project is an independent portfolio prototype, not an official GameOn
+product. It is for demonstration only, not for athlete selection, medical, or
+training decisions.

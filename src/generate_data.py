@@ -29,9 +29,6 @@ ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = ROOT / "data" / "raw"
 
 
-# --------------------------------------------------------------------------
-# 1. FIXTURES
-# --------------------------------------------------------------------------
 def build_fixtures(rng: np.random.Generator) -> pd.DataFrame:
     """One row per club per match. Opponents are never one of our cast clubs."""
     rows = []
@@ -53,9 +50,6 @@ def build_fixtures(rng: np.random.Generator) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# --------------------------------------------------------------------------
-# 2. SIMULATE SESSIONS
-# --------------------------------------------------------------------------
 def draw_minutes(rng, position):
     """Return (true_minutes, recorded_minutes, minutes_estimated_flag)."""
     if position == "Goalkeeper":
@@ -67,7 +61,7 @@ def draw_minutes(rng, position):
         true_min = int(rng.integers(65, 90))
     else:                                            # substitute / early exit
         true_min = int(rng.integers(30, 65))
-    # Sometimes minutes are only known approximately (like "~60" on GameOn's graphic)
+    # Simulate approximate recorded minutes.
     if rng.random() < 0.35:
         return true_min, int(round(true_min / 15) * 15), True
     return true_min, true_min, False
@@ -82,13 +76,13 @@ def simulate_sessions(rng, fixtures: pd.DataFrame) -> pd.DataFrame:
         club_fixtures = fixtures[fixtures["club_key"] == ath["club"]]
 
         for _, fx in club_fixtures.iterrows():
-            # Occasionally an outfield athlete does not feature at all (no row)
+            # Some outfield players have no recorded session.
             if ath["position"] != "Goalkeeper" and rng.random() < 0.08:
                 continue
 
             true_min, rec_min, estimated = draw_minutes(rng, ath["position"])
 
-            # Metres per minute: baseline x trend x random match-to-match noise.
+            # Combine baseline, gradual trend, and match variation.
             mpm = prof["mpm"] * level * (1 + trend * (fx["match_number"] - 4.5))
             mpm *= rng.normal(1.0, 0.04)
             mpm *= 1 + (90 - true_min) / 90 * 0.12     # shorter spells are a bit more intense
@@ -122,14 +116,11 @@ def simulate_sessions(rng, fixtures: pd.DataFrame) -> pd.DataFrame:
             })
 
     df = pd.DataFrame(rows)
-    # Distance per minute is derived from the RECORDED minutes (as a system would report it).
+    # Recompute the rate from recorded minutes.
     df["distance_per_min"] = (df["total_distance_km"] * 1000 / df["minutes_played"]).round(1)
     return df
 
 
-# --------------------------------------------------------------------------
-# 3. PLANT DATA-QUALITY PROBLEMS (and keep a log of the ground truth)
-# --------------------------------------------------------------------------
 def plant_issues(rng, df: pd.DataFrame):
     log = []
     pool = list(rng.permutation(len(df)))
@@ -149,7 +140,7 @@ def plant_issues(rng, df: pd.DataFrame):
         log.append({"session_id": df.iloc[idx]["session_id"], "issue_type": issue,
                     "column": column, "note": note})
 
-    # Missing measurements (left as NaN, never zero)
+    # Missing measurements remain NaN.
     for idx in take(3):
         df.iloc[idx, df.columns.get_loc("sprint_count")] = np.nan
         record(idx, "missing_value", "sprint_count", "sprint count not recorded")
@@ -163,7 +154,7 @@ def plant_issues(rng, df: pd.DataFrame):
         df.iloc[idx, df.columns.get_loc("player_load_au")] = np.nan
         record(idx, "missing_value", "player_load_au", "player load not recorded")
 
-    # Sensor dropout: full minutes recorded, but only about half the movement captured
+    # Simulate partial sensor dropout.
     for idx in take(1, only=lambda r: r["minutes_played"] >= 85 and r["position"] != "Goalkeeper"):
         row_cols = df.columns
         df.iloc[idx, row_cols.get_loc("total_distance_km")] = round(df.iloc[idx]["total_distance_km"] * 0.55, 2)
@@ -176,7 +167,7 @@ def plant_issues(rng, df: pd.DataFrame):
         record(idx, "partial_record", "multiple",
                "sensor dropout: distance/load ~55% of expected, HSR and sprints missing")
 
-    # Impossible values
+    # Plant implausible measurements.
     for idx in take(1):
         df.iloc[idx, df.columns.get_loc("top_speed_kmh")] = 52.0
         record(idx, "invalid_value", "top_speed_kmh", "52.0 km/h is physiologically implausible")
@@ -184,11 +175,10 @@ def plant_issues(rng, df: pd.DataFrame):
         df.iloc[idx, df.columns.get_loc("peak_accel_ms2")] = 14.2
         record(idx, "invalid_value", "peak_accel_ms2", "14.2 m/s2 is implausible")
 
-    # Estimated minutes already exist from draw_minutes; log them for ground truth
+    # Record approximate-minute labels in the issue log.
     for i in np.where(df["minutes_estimated"])[0]:
         record(i, "estimated_minutes", "minutes_played", "minutes rounded to nearest 15 (approximate)")
 
-    # One exact duplicate row
     dup_idx = pool[0]
     duplicate = df.iloc[[dup_idx]].copy()
     record(dup_idx, "duplicate_record", "all", "exact copy of this session appended")
@@ -197,9 +187,6 @@ def plant_issues(rng, df: pd.DataFrame):
     return df, pd.DataFrame(log)
 
 
-# --------------------------------------------------------------------------
-# 4. MAIN
-# --------------------------------------------------------------------------
 def main():
     rng = np.random.default_rng(SEED)
     fixtures = build_fixtures(rng)

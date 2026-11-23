@@ -7,14 +7,13 @@ IMPORTANT: Club names come from the public league table (context only).
 All athletes, fixtures, dates and GPS values are FICTIONAL.
 """
 
-# Flip to False to replace real club names with "Club A", "Club B", ...
+# Set False to display generic club labels.
 USE_REAL_CLUB_NAMES = True
 
 DATA_SOURCE_LABEL = "SYNTHETIC"
 COMPETITION_LABEL = "Kenya Women's Premier League (synthetic fixtures)"
 
-# League table snapshot supplied by the project author (undated, unverified).
-# table_pos is only used to tag opponents as top / middle / bottom band.
+# Undated league-table positions provide opponent context only.
 CLUBS = {
     "POL": {"real": "Police Bullets",       "generic": "Club A", "table_pos": 1},
     "ULI": {"real": "Ulinzi Starlets",      "generic": "Club B", "table_pos": 2},
@@ -30,12 +29,11 @@ CLUBS = {
     "VIH": {"real": "Vihiga Queens",        "generic": "Club L", "table_pos": 12},
 }
 
-# Clubs our fictional athletes "play for". They never face each other in the
-# synthetic fixtures, so we do not recreate any real club-vs-club fixture.
+# Cast clubs do not play one another in the synthetic fixtures.
 CAST_CLUBS = ["ZET", "MAT", "KIB"]
 OPPONENT_POOL = [k for k in CLUBS if k not in CAST_CLUBS]
 
-# Fictional athletes (pseudonyms). Any resemblance to real people is coincidental.
+# Fictional athlete profiles.
 ATHLETES = [
     {"athlete_id": "ATH-01", "athlete_name": "Wanjiru Mutiso", "club": "ZET", "position": "Midfielder"},
     {"athlete_id": "ATH-02", "athlete_name": "Akinyi Odera",   "club": "ZET", "position": "Forward"},
@@ -57,8 +55,7 @@ def table_band(key: str) -> str:
     return "top" if pos <= 4 else "middle" if pos <= 8 else "bottom"
 
 
-# "Typical" per-position values used ONLY to generate plausible synthetic data.
-# They are broad assumptions, not measurements of any real athlete.
+# Synthetic position profiles; these are not athlete measurements.
 POSITION_PROFILES = {
     #               m/min  HSR share  sprints/90  accels/90  decels/90  top km/h  peak accel
     "Goalkeeper": dict(mpm=55,  hsr=0.005, sprints=4,  accels=25, decels=25, top=23.5, pa=3.8),

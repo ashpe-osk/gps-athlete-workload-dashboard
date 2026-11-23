@@ -1,6 +1,8 @@
 """Accessible color tokens shared by the dashboard and Plotly charts."""
 from typing import TypedDict
 
+import pandas as pd
+
 
 class ThemeColors(TypedDict):
     background: str
@@ -109,6 +111,21 @@ def colors_for(theme: str) -> ThemeColors:
         return dict(THEMES[theme])
     except KeyError as exc:
         raise ValueError(f"Unknown theme {theme!r}; expected one of {tuple(THEMES)}") from exc
+
+
+def style_dataframe(dataframe: pd.DataFrame, theme: str):
+    """Apply the selected app theme to dataframe cells."""
+    colors = colors_for(theme)
+    return (
+        dataframe.style
+        .set_properties(
+            **{
+                "background-color": colors["surface"],
+                "color": colors["text"],
+                "border-color": colors["border"],
+            }
+        )
+    )
 
 
 def app_css(theme: str) -> str:
