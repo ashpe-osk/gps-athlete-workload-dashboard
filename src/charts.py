@@ -19,10 +19,16 @@ def _style(fig: go.Figure, title: str, y_label: str, theme: str = "Light") -> go
     fig.update_layout(
         template="plotly_dark" if theme == "Dark" else "plotly_white",
         title=dict(text=title, font=dict(size=16, color=colors["text"])),
-        height=360, margin=dict(l=18, r=18, t=58, b=28),
+        height=360, margin=dict(l=18, r=18, t=58, b=58),
         paper_bgcolor=colors["surface"], plot_bgcolor=colors["surface"],
         font=dict(family="Arial, sans-serif", color=colors["text"], size=12),
-        legend=dict(orientation="h", y=-0.24, title=None),
+        legend=dict(
+            orientation="h",
+            x=0,
+            y=-0.28,
+            title=None,
+            font=dict(color=colors["text"], size=11),
+        ),
         yaxis_title=y_label, xaxis_title=None,
     )
     fig.update_xaxes(
@@ -51,12 +57,41 @@ def trend_chart(athlete_df, column: str, title: str, y_label: str,
     custom = np.column_stack([athlete_df["opponent"], athlete_df["home_away"], minutes])
 
     fig = go.Figure()
+    valid = values.dropna().astype(float)
+    if len(valid) >= m.MIN_SESSIONS_FOR_REFERENCE_BAND:
+        mean = float(valid.mean())
+        sd = float(valid.std(ddof=1))
+        date_start = athlete_df["match_date"].min()
+        date_end = athlete_df["match_date"].max()
+        if show_reference_band and sd > 0:
+            fig.add_trace(go.Scatter(
+                x=[date_start, date_end, date_end, date_start],
+                y=[mean - sd, mean - sd, mean + sd, mean + sd],
+                mode="lines",
+                fill="toself",
+                fillcolor=colors["rolling"],
+                opacity=0.10,
+                line=dict(width=0),
+                name="Descriptive mean ± 1 SD",
+                legendrank=4,
+                hoverinfo="skip",
+            ))
+        fig.add_trace(go.Scatter(
+            x=[date_start, date_end],
+            y=[mean, mean],
+            mode="lines",
+            name="Historical mean",
+            legendrank=3,
+            line=dict(color=colors["rolling"], width=1.5, dash="dot"),
+            hovertemplate=f"Historical mean: %{{y:.{decimals}f}}<extra></extra>",
+        ))
     fig.add_trace(go.Scatter(
         x=athlete_df["match_date"], y=values,
         mode="lines+markers" + ("+text" if show_labels else ""),
         text=[f"{value:.{decimals}f}" if pd.notna(value) else "" for value in values],
         textposition="top center",
-        name="Match value",
+        name="Session values",
+        legendrank=1,
         connectgaps=False,         line=dict(color=colors["chart_accent"], width=2),
         marker=dict(size=10, symbol=symbols, line=dict(width=1.5, color="white")),
         customdata=custom,
@@ -67,30 +102,12 @@ def trend_chart(athlete_df, column: str, title: str, y_label: str,
         rolled = m.rolling_mean(athlete_df[column])
         if rolled.notna().any():
             fig.add_trace(go.Scatter(
-                x=athlete_df["match_date"], y=rolled, mode="lines", name="Rolling avg (3 sessions)",
+                x=athlete_df["match_date"], y=rolled, mode="lines",
+                name="Rolling average (3 sessions)",
+                legendrank=2,
                 connectgaps=True, line=dict(color=colors["rolling"], width=2, dash="dash"),
                 hovertemplate=f"Rolling avg: %{{y:.{decimals}f}}<extra></extra>",
             ))
-    valid = values.dropna().astype(float)
-    if len(valid) >= m.MIN_SESSIONS_FOR_REFERENCE_BAND:
-        mean = float(valid.mean())
-        sd = float(valid.std(ddof=1)) if len(valid) >= 2 else 0.0
-        fig.add_hline(
-            y=mean,
-            line=dict(color=colors["rolling"], width=1.5, dash="dot"),
-            annotation_text="Historical average",
-            annotation_position="bottom right",
-        )
-        if show_reference_band and sd > 0:
-            fig.add_hrect(
-                y0=mean - sd,
-                y1=mean + sd,
-                fillcolor=colors["rolling"],
-                opacity=0.10,
-                line_width=0,
-                annotation_text="Descriptive mean +/- 1 SD",
-                annotation_position="top left",
-            )
     changes = m.pct_change_vs_previous(values)
     latest_positions = np.flatnonzero(values.notna().to_numpy())
     if len(latest_positions) >= 2:

@@ -334,7 +334,8 @@ def test_page_number_is_a_centered_plain_digit_with_a_12mm_bottom_margin():
     assert 36 / 72 * 25.4 >= 12
 
 
-def test_new_charts_build_for_real_cleaned_sessions(cleaned_data):
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_all_plotly_charts_use_theme_legend_text_color(cleaned_data, theme):
     sessions, _ = cleaned_data
     athlete_ids = sorted(sessions["athlete_id"].unique())[:2]
     athlete_id = athlete_ids[0]
@@ -343,20 +344,35 @@ def test_new_charts_build_for_real_cleaned_sessions(cleaned_data):
     )
     comparison, _ = m.comparison_table(sessions, athlete_ids)
 
-    assert len(charts.workload_composition_chart(athlete).data) == 2
-    assert len(charts.match_intensity_scatter(athlete).data) >= 1
-    assert len(charts.consistency_heatmap(athlete).data) == 1
-    assert len(charts.comparison_radar_chart(comparison).data) == len(athlete_ids)
-    assert len(charts.comparison_box_chart(
-        sessions, athlete_ids, "sprint_count_per90", "Sprints", "Sprints / 90"
-    ).data) == len(athlete_ids)
-    assert len(charts.comparison_bubble_chart(comparison).data) >= 1
-    quality_map = charts.quality_map_chart(sessions)
+    figures = [
+        charts.workload_composition_chart(athlete, theme),
+        charts.match_intensity_scatter(athlete, theme),
+        charts.consistency_heatmap(athlete, theme),
+        charts.comparison_radar_chart(comparison, theme),
+        charts.comparison_box_chart(
+            sessions, athlete_ids, "sprint_count_per90", "Sprints", "Sprints / 90", theme
+        ),
+        charts.comparison_bubble_chart(comparison, theme),
+        charts.quality_map_chart(sessions, theme),
+    ]
+
+    assert len(figures[0].data) == 2
+    assert len(figures[1].data) >= 1
+    assert len(figures[2].data) == 1
+    assert len(figures[3].data) == len(athlete_ids)
+    assert len(figures[4].data) == len(athlete_ids)
+    assert len(figures[5].data) >= 1
+    quality_map = figures[6]
     assert len(quality_map.data) == 1
     assert len(set(quality_map.data[0].x)) == sessions["match_id"].nunique()
+    assert all(
+        figure.layout.legend.font.color == colors_for(theme)["text"]
+        for figure in figures
+    )
 
 
-def test_trend_chart_supports_labels_reference_line_and_missing_gaps(cleaned_data):
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_trend_chart_legend_explains_series_and_uses_theme_text_color(cleaned_data, theme):
     sessions, _ = cleaned_data
     athlete_id = sessions["athlete_id"].iloc[0]
     athlete = m.add_per90_columns(
@@ -369,11 +385,21 @@ def test_trend_chart_supports_labels_reference_line_and_missing_gaps(cleaned_dat
         "count",
         decimals=0,
         show_rolling=True,
+        theme=theme,
         show_labels=True,
     )
-    match_trace = next(trace for trace in figure.data if trace.name == "Match value")
-    assert match_trace.connectgaps is False
-    assert match_trace.text is not None
+    traces = {trace.name: trace for trace in figure.data}
+    assert {
+        "Session values",
+        "Rolling average (3 sessions)",
+        "Historical mean",
+        "Descriptive mean ± 1 SD",
+    } <= set(traces)
+    assert traces["Session values"].connectgaps is False
+    assert traces["Session values"].text is not None
+    assert figure.layout.legend.font.color == colors_for(theme)["text"]
+    assert traces["Historical mean"].line.dash == "dot"
+    assert traces["Descriptive mean ± 1 SD"].fill == "toself"
 
 
 def test_observation_table_is_sorted_compact_and_labels_change_direction(cleaned_data):

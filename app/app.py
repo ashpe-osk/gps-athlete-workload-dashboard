@@ -287,8 +287,11 @@ with tabs[3]:
                 st.plotly_chart(fig, width="stretch")
                 n_valid = int(athlete_range[use_column].notna().sum())
                 st.caption(f"Based on {n_valid} of {len(athlete_range)} sessions. Gaps = no valid measurement.")
-    st.caption("◆ = minutes approximate. Dashed line = average of the last 3 valid sessions (appears once 3 exist). "
-               "Reference bands, when shown, are descriptive mean +/- 1 SD bands requiring at least "
+    st.caption(
+        "Solid orange = session value; dashed blue = rolling average of 3 valid sessions; "
+        "dotted blue = historical mean; shaded blue = descriptive mean ± 1 SD. "
+        "Diamonds mark approximate minutes; gaps show missing measurements. "
+        "The reference mean and band use selected, eligible sessions and are shown only with at least "
                f"{m.MIN_SESSIONS_FOR_REFERENCE_BAND} valid observations. "
                + (f"{n_excluded} session(s) excluded for suspected sensor dropout." if n_excluded else ""))
 

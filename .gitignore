@@ -16,5 +16,8 @@ Thumbs.db
 data/processed/*
 !data/processed/.gitkeep
 
+# Local portfolio handoff
+/For Portfolio/
+
 # Secrets (we have none, but never commit them)
 .env
